@@ -1,0 +1,5 @@
+# Dependências do aplicativo
+PySide6-Essentials>=6.7,<7
+pydantic>=2.7,<3
+openpyxl>=3.1,<4
+pywin32>=306; sys_platform == "win32"

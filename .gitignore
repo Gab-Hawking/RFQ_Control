@@ -1,0 +1,23 @@
+# Planilhas e dados reais (classificação C2 — não versionar)
+*.xlsm
+*.xlsx
+*.xls
+*.xlsb
+~$*
+
+# Sistema operacional / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Dados locais do aplicativo (nunca versionar)
+dados/
+
+# Python / build
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+build/
+dist/
