@@ -1,0 +1,3 @@
+# Geração do executável (sempre com PyInstaller)
+-r requirements.txt
+pyinstaller>=6.3,<7

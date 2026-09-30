@@ -1,7 +1,7 @@
 # Proposta do novo sistema — RFQ Control
 
 > Baseada na análise da planilha legada ([`01-analise-planilha-legado.md`](01-analise-planilha-legado.md)).
-> Os itens marcados em **Decisões em aberto** (§8) precisam ser confirmados antes de iniciar o código.
+> Arquitetura e decisões confirmadas estão na §6; o que ainda falta decidir está na §8.
 
 ## 1. Objetivo
 
@@ -182,8 +182,9 @@ stateDiagram-v2
 
 ### 4.3 Templates de e-mail atuais (a migrar)
 
-Variáveis: `{{empresa}}`, `{{contato}}`, `{{rfq}}`, `{{cliente}}`, `{{projeto}}`, `{{prazo}}`,
-`{{tabela_itens}}`, `{{tabela_projeto}}`, `{{assinatura}}`.
+Variáveis: `{{empresa}}`, `{{contato}}`, `{{fornecedor}}`, `{{rfq}}`, `{{cliente}}`, `{{projeto}}`,
+`{{planta}}`, `{{solicitante}}`, `{{pacote}}`, `{{prazo}}`, `{{tabela_itens}}`, `{{tabela_projeto}}`.
+A assinatura é incluída automaticamente (a padrão do Outlook, ou a configurada para `.eml`).
 
 **Assunto (ambos os idiomas):** `{{rfq}} / Customer: {{cliente}} / Project: {{projeto}}`
 
@@ -206,7 +207,7 @@ Variáveis: `{{empresa}}`, `{{contato}}`, `{{rfq}}`, `{{cliente}}`, `{{projeto}}
 >
 > NOTA: Favor enviar a cotação de acordo com as documentações enviadas, contemplando o CBD e lead time.
 >
-> {{assinatura}}
+> *(assinatura)*
 
 **Inglês**
 
@@ -226,7 +227,7 @@ Variáveis: `{{empresa}}`, `{{contato}}`, `{{rfq}}`, `{{cliente}}`, `{{projeto}}
 > Note: Please submit your quotation in accordance with the provided documentation, including the
 > CBD and lead time.
 >
-> {{assinatura}}
+> *(assinatura)*
 
 Correções já embutidas em relação à macro: saudação com o nome real do contato, Cc do fornecedor
 + comprador, planta correta, prazo formatado no idioma do e-mail e gravado na RFQ, parágrafos
@@ -244,63 +245,71 @@ preservados, HTML válido, colunas de descrição/volume/capacidade incluídas q
 | Usabilidade | Interface em PT-BR (e-mails PT/EN), responsiva, atalhos de teclado, tema claro/escuro |
 | Multiusuário | Acesso simultâneo sem conflito de arquivo |
 
-## 6. Arquitetura recomendada
+## 6. Arquitetura adotada
 
-**Recomendação: aplicação web full-stack em TypeScript**, com uma única linguagem no front e no
-back, tipagem forte de ponta a ponta e um ecossistema maduro para interfaces ricas.
+Decisões confirmadas (30/09/2026): uso **local**, **um usuário**, **Python**, e-mail como
+**rascunho no Outlook**, executável gerado **sempre com PyInstaller** e dados em uma pasta com
+**um arquivo por "aba"**, editáveis pelo próprio aplicativo.
 
 | Camada | Tecnologia |
 |---|---|
-| Aplicação | Next.js (App Router) + React + TypeScript |
-| Interface | Tailwind CSS + shadcn/ui · TanStack Table (grades) · Recharts (gráficos) |
-| Banco de dados | PostgreSQL em produção · SQLite para uso local/desenvolvimento · Prisma ORM (migrações) |
-| Validação / formulários | Zod · React Hook Form |
-| E-mail | Geração MIME/`.eml` (rascunho que abre no Outlook) · Microsoft Graph ou SMTP para envio direto |
-| Excel | ExcelJS (importação da planilha legada e exportações) |
-| Tarefas agendadas | Job diário para atrasos e lembretes |
-| Testes / CI | Vitest · Playwright · GitHub Actions |
-| Implantação | Docker (servidor interno ou nuvem) ou execução local |
+| Interface | PySide6 (Qt 6 Widgets) — aplicativo desktop nativo, sem navegador nem servidor |
+| Regras de negócio | Python 3.11+ (`rfq_control/servicos`), independentes da interface e testadas |
+| Dados | Um arquivo JSON por coleção na pasta `dados`, validado com pydantic; gravação atômica e backup diário |
+| E-mail | Outlook da área de trabalho via automação (pywin32), como a macro; alternativa `.eml` (rascunho) |
+| Excel | Leitor próprio em streaming para importar a planilha antiga · openpyxl para exportar |
+| Executável | PyInstaller (modo pasta) com as bibliotecas em `programa/` |
+| Testes / CI | pytest (inclusive telas, com Qt offscreen) · GitHub Actions gera o `.exe` no Windows |
+
+Estrutura instalada:
+
+```
+RFQ_Control\
+├── RFQ_Control.exe
+├── programa\            ← bibliotecas (PyInstaller, contents_directory)
+└── dados\
+    ├── configuracoes.json
+    ├── fornecedores.json   (antiga aba CadastroContatos)
+    ├── projetos.json       (antiga aba CadastroProjetos)
+    ├── solicitantes.json
+    ├── feriados.json       (antiga aba Feriados)
+    ├── modelos_email.json  (antiga aba CorpoEmail)
+    ├── pacotes.json        (pacotes de cotação e itens)
+    ├── rfqs.json           (antiga aba Controle)
+    ├── anexos\  emails\  backup\  logs\
+```
 
 ```mermaid
 flowchart LR
-    U[Navegador<br/>usuários] --> APP[Next.js<br/>UI + API]
-    APP --> DB[(PostgreSQL / SQLite)]
-    APP --> FS[(Anexos<br/>disco / blob)]
-    APP --> EML[.eml de rascunho] --> OL[Outlook do usuário]
-    APP -. fase 4 .-> GRAPH[Microsoft Graph<br/>envio + leitura de respostas]
-    JOB[Job diário<br/>atrasos e lembretes] --> DB
-    JOB -. fase 4 .-> GRAPH
-    XL[RFQ_Controle.xlsm] -- importação única --> APP
+    U[Usuário] --> UI[Telas PySide6]
+    UI --> SRV[Serviços<br/>regras de negócio]
+    SRV --> DADOS[(dados/*.json<br/>um arquivo por aba)]
+    SRV --> OL[Outlook<br/>rascunho para revisão]
+    SRV -. alternativa .-> EML[arquivo .eml]
+    SRV --> XLSX[Exportação Excel]
+    XL[RFQ_Controle.xlsm] -- importação --> SRV
 ```
 
-**Alternativas consideradas**
-
-| Opção | Quando faz sentido |
-|---|---|
-| Python (FastAPI + SQLAlchemy) + React | Se houver preferência por Python no back-end; mesma arquitetura, duas linguagens |
-| Aplicação desktop (Tauri/Electron + SQLite) | Se não for possível hospedar nada e o uso for de uma única pessoa |
-| Power Platform (Power Apps + SharePoint/Dataverse + Power Automate) | Se a TI só permitir ferramentas Microsoft 365; low-code, fora do GitHub |
+Por que JSON e não um banco único: cada coleção fica em um arquivo legível, fácil de copiar e de
+restaurar, como as abas da planilha — e o volume (milhares de registros) é pequeno para isso. As
+gravações são atômicas (arquivo temporário + substituição), então o arquivo nunca fica pela metade.
 
 ## 7. Roadmap
 
-| Fase | Entregas |
-|---|---|
-| **0 — Fundação** | Stack e estrutura do repositório, CI, modelo de dados + migrações, dados de exemplo, **importador da planilha** com relatório de inconsistências |
-| **1 — MVP (paridade)** | Cadastros, lista de RFQs, criação de pacote → N RFQs, geração de e-mail PT/EN com pré-visualização e `.eml`, feriados, exportação Excel |
-| **2 — Acompanhamento** | Status, registro de respostas, prazos/atrasos automáticos, follow-up, dashboard |
-| **3 — Análise** | Comparativo de propostas, scorecard de fornecedores, anexos, volumes por ano |
-| **4 — Integração** | Login Microsoft (Entra ID), envio via Graph, leitura automática de respostas, notificações |
+| Fase | Entregas | Situação |
+|---|---|---|
+| **0 — Fundação** | Estrutura do projeto, modelo de dados, importador da planilha com relatório, testes, CI, executável | ✅ v0.1.0 |
+| **1 — Paridade** | Cadastros, lista de RFQs, pacote → N RFQs, e-mail PT/EN (Outlook/.eml), feriados, exportação Excel | ✅ v0.1.0 |
+| **2 — Acompanhamento** | Status, resposta (valor, moeda, lead time), atrasos automáticos, cobrança, painel | ✅ v0.1.0 (resposta no nível da RFQ) |
+| **3 — Análise** | Cotação por item (N02), comparativo lado a lado (N03), scorecard detalhado, volumes por ano (N11) | Próxima |
+| **4 — Integrações** | Leitura automática de respostas no Outlook (N13), lembretes automáticos | Futuro |
 
-Ao fim da Fase 1 a planilha pode ser aposentada.
+A planilha pode ser aposentada a partir da v0.1.0: importe o `.xlsm` em **Configurações →
+Importar planilha antiga** e complete os e-mails dos fornecedores.
 
-## 8. Decisões em aberto
+## 8. Decisões pendentes
 
-1. **Onde o sistema vai rodar?** Só no seu computador, em um servidor/nuvem da empresa ou ainda
-   não definido? Há restrições da TI (instalar software, hospedar aplicações, Docker)?
-2. **Quantos usuários** vão usar ao mesmo tempo (só você, a equipe de compras, outras áreas)?
-3. **Stack:** seguir com TypeScript (recomendado) ou prefere Python no back-end?
-4. **E-mail:** abrir o rascunho no Outlook (`.eml`) atende no início? Existe possibilidade de a TI
-   registrar um aplicativo no Entra ID para usar o Microsoft Graph mais adiante?
-5. **Resposta do fornecedor:** quais campos da cotação precisam ser registrados (preço, moeda,
-   lead time, ferramental, frete, validade…)?
-6. **Feriados:** quais localidades considerar (plantas no Brasil e na Argentina, feriados municipais)?
+1. **Resposta do fornecedor por item:** quais campos registrar na Fase 3 (preço unitário,
+   ferramental, frete, validade, capacidade 120%, cobertura)?
+2. **Feriados locais:** quais feriados municipais/estaduais das plantas devem ser cadastrados
+   (os nacionais do Brasil são gerados automaticamente)?
