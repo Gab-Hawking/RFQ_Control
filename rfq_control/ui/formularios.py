@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date
-from enum import Enum
 from typing import Any
 
 from PySide6.QtWidgets import (
@@ -144,10 +142,3 @@ class DialogoFormulario(QDialog):
             self.resultado = resultado
             self.accept()
 
-
-def opcoes_enum(enum: type[Enum], rotulo: Callable[[Enum], str] | None = None) -> list[tuple[str, Any]]:
-    return [(rotulo(item) if rotulo else item.value, item) for item in enum]
-
-
-def hoje() -> date:
-    return date.today()

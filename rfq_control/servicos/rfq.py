@@ -14,7 +14,6 @@ from ..modelos import (
     RFQ,
     STATUS_COM_RESPOSTA,
     Idioma,
-    Item,
     Pacote,
     StatusRFQ,
 )
