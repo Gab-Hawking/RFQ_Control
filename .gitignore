@@ -1,0 +1,12 @@
+# Planilhas e dados reais (classificação C2 — não versionar)
+*.xlsm
+*.xlsx
+*.xls
+*.xlsb
+~$*
+
+# Sistema operacional / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
