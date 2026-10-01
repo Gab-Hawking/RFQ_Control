@@ -9,18 +9,21 @@ from ..modelos import Idioma
 
 _DIAS_SEMANA = {
     Idioma.PT: ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"],
+    Idioma.ES: ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"],
     Idioma.EN: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
 }
 _MESES = {
     Idioma.PT: ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
                 "agosto", "setembro", "outubro", "novembro", "dezembro"],
+    Idioma.ES: ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+                "agosto", "septiembre", "octubre", "noviembre", "diciembre"],
     Idioma.EN: ["January", "February", "March", "April", "May", "June", "July",
                 "August", "September", "October", "November", "December"],
 }
 
 
 def data_por_extenso(dia: date, idioma: Idioma) -> str:
-    """'terça-feira, 6 de outubro de 2026' ou 'Tuesday, October 6, 2026'."""
+    """'terça-feira, 6 de outubro de 2026', 'martes, 6 de octubre de 2026' ou 'Tuesday, October 6, 2026'."""
     semana = _DIAS_SEMANA[idioma][dia.weekday()]
     mes = _MESES[idioma][dia.month - 1]
     if idioma == Idioma.EN:

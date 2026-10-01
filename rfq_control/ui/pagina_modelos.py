@@ -60,7 +60,9 @@ def pre_visualizar_html(modelo: ModeloEmail, empresa: str, colunas_fornecedor: b
 
 
 class PaginaModelos(QWidget):
-    def __init__(self, janela: JanelaPrincipal):
+    """Modelos de e-mail; ``embutida=True`` é a aba "Corpo do E-mail" da Base de dados."""
+
+    def __init__(self, janela: JanelaPrincipal, embutida: bool = False):
         super().__init__()
         self.setObjectName("pagina")
         self.janela = janela
@@ -68,17 +70,26 @@ class PaginaModelos(QWidget):
         self.atual: ModeloEmail | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(12)
-        layout.addWidget(cabecalho_pagina(
-            "Modelos de e-mail",
-            "Textos usados nos e-mails de RFQ e de cobrança. Separe parágrafos com uma linha em branco; "
-            "use **texto** para negrito e as variáveis da lista para dados da RFQ.",
-        ))
+        explicacao = (
+            "Textos padrão dos e-mails de RFQ e de cobrança, em português, espanhol e inglês — o idioma "
+            "usado é o do fornecedor. Separe parágrafos com uma linha em branco; use **texto** para negrito "
+            "e as variáveis da lista para os dados da RFQ."
+        )
+        if embutida:
+            layout.setContentsMargins(12, 12, 12, 8)
+            layout.setSpacing(8)
+            dica = QLabel(explicacao)
+            dica.setObjectName("dica")
+            dica.setWordWrap(True)
+            layout.addWidget(dica)
+        else:
+            layout.setContentsMargins(24, 20, 24, 20)
+            layout.setSpacing(12)
+            layout.addWidget(cabecalho_pagina("Modelos de e-mail", explicacao))
 
         divisor = QSplitter(Qt.Orientation.Horizontal)
         self.lista = QListWidget()
-        self.lista.setMaximumWidth(280)
+        self.lista.setMaximumWidth(330)
         self.lista.currentItemChanged.connect(self._selecionar)
         divisor.addWidget(self.lista)
 
@@ -121,7 +132,7 @@ class PaginaModelos(QWidget):
         )
         variaveis_layout.addWidget(self.descricao_variavel)
         divisor.addWidget(variaveis)
-        divisor.setSizes([240, 640, 260])
+        divisor.setSizes([300, 620, 260])
         layout.addWidget(divisor, 1)
 
     def atualizar(self) -> None:

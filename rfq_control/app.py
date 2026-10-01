@@ -105,8 +105,8 @@ def verificar_instalacao(app: QApplication) -> int:
 
     base = BaseDados.abrir(pasta_dados())
     janela = JanelaPrincipal(base)
-    for chave in ("painel", "rfqs", "pacotes", "fornecedores", "projetos", "solicitantes", "feriados",
-                  "modelos", "configuracoes"):
+    for chave in ("painel", "rfqs", "pacotes", "controle", "fornecedores", "projetos", "solicitantes",
+                  "feriados", "modelos", "configuracoes"):
         janela.ir_para(chave)
         app.processEvents()
     janela.close()

@@ -35,3 +35,17 @@ def test_feriados(base):
     assert cadastros.adicionar_feriados_nacionais(base, 2030) == 0
     with pytest.raises(srv.ErroNegocio, match="já está cadastrada"):
         cadastros.salvar_feriado(base, Feriado(data=date(2030, 12, 25)))
+
+
+def test_idioma_do_fornecedor_vale_para_rfqs_em_rascunho(base_populada, pacote_exemplo):
+    from rfq_control.modelos import Idioma
+
+    _, [rascunho] = srv.criar_pacote_com_rfqs(base_populada, pacote_exemplo, ["f1"])
+    outra = pacote_exemplo.model_copy(update={"id": "p2"})
+    _, [enviada] = srv.criar_pacote_com_rfqs(base_populada, outra, ["f1"])
+    srv.registrar_envio(base_populada, enviada, Idioma.PT, "enviada")
+
+    fornecedor = base_populada.fornecedores.obter("f1")
+    cadastros.salvar_fornecedor(base_populada, fornecedor.model_copy(update={"idioma": Idioma.ES}))
+    assert base_populada.rfqs.obter(rascunho.id).idioma == Idioma.ES
+    assert base_populada.rfqs.obter(enviada.id).idioma == Idioma.PT  # já enviada: mantém o idioma do envio

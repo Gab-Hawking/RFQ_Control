@@ -39,6 +39,7 @@ from ..modelos import (
 )
 from .dias_uteis import somar_dias_uteis
 from .formatos import ler_numero, normalizar_nome
+from .rfq import proximo_numero
 from .leitor_xlsx import ErroPlanilha, LeitorXlsx, Valor, data_excel
 
 LINHAS_VAZIAS_PARA_PARAR = 2000
@@ -49,6 +50,7 @@ _REGEX_NUMERICO = re.compile(r"^\s*-?[\d.,]+\s*$")
 class RelatorioImportacao:
     linhas_lidas: int = 0
     rfqs_importadas: int = 0
+    rfqs_novas: int = 0
     rfqs_existentes: int = 0
     pacotes_criados: int = 0
     fornecedores_criados: int = 0
@@ -62,6 +64,7 @@ class RelatorioImportacao:
         linhas = [
             f"Linhas de item lidas: {self.linhas_lidas}",
             f"RFQs importadas: {self.rfqs_importadas}",
+            f"RFQs novas criadas (rascunho): {self.rfqs_novas}",
             f"Pacotes de cotação criados: {self.pacotes_criados}",
             f"Fornecedores criados: {self.fornecedores_criados}",
             f"Projetos criados: {self.projetos_criados}",
@@ -173,12 +176,13 @@ def _ler_controle(leitor: LeitorXlsx, progresso: Callable[[str], None]) -> list[
     for numero_linha, valores in leitor.linhas(
         "Controle",
         inicio=2,
+        coluna_chave=("A", "F"),  # número da RFQ ou fornecedor (RFQ nova sem número)
         parar_apos_vazias=LINHAS_VAZIAS_PARA_PARAR,
         progresso=lambda n: progresso(f"Lendo aba Controle… linha {n}"),
     ):
         numero = _texto(valores.get("A")).upper().replace(" ", "")
-        if not numero:
-            continue
+        if not numero and not (_texto(valores.get("F")) and _texto(valores.get("E"))):
+            continue  # sem número, só vira RFQ nova se tiver fornecedor e projeto
         um_qtd = valores.get("J")
         quantidade = _numero(um_qtd)
         item = Item(
@@ -238,8 +242,6 @@ def importar_planilha(
                 if dia and dia not in existentes:
                     existentes.add(dia)
                     novos_feriados.append(Feriado(data=dia, descricao="Importado da planilha"))
-        else:
-            avisos.append("Aba 'Feriados' não encontrada.")
 
         # ------------------------------------------------ projetos e solicitantes
         if "CadastroProjetos" in leitor.abas:
@@ -259,8 +261,6 @@ def importar_planilha(
                 solicitante = _texto(valores.get("J"))
                 if solicitante:
                     cadastros.solicitante(solicitante)
-        else:
-            avisos.append("Aba 'CadastroProjetos' não encontrada.")
 
         # ------------------------------------------------ fornecedores
         if "CadastroContatos" in leitor.abas:
@@ -282,8 +282,6 @@ def importar_planilha(
                         _texto(valores.get("E")), avisos, nome,
                     )
                     cadastros.alterados.add(fornecedor.id)
-        else:
-            avisos.append("Aba 'CadastroContatos' não encontrada.")
 
         # ------------------------------------------------ controle
         progresso("Lendo aba Controle…")
@@ -292,8 +290,14 @@ def importar_planilha(
 
     progresso("Organizando RFQs e pacotes…")
     por_numero: OrderedDict[str, list[_LinhaControle]] = OrderedDict()
+    sem_numero: OrderedDict[tuple, list[_LinhaControle]] = OrderedDict()
     for linha in linhas:
-        por_numero.setdefault(linha.numero, []).append(linha)
+        if linha.numero:
+            por_numero.setdefault(linha.numero, []).append(linha)
+        else:
+            chave = (normalizar_nome(linha.projeto), normalizar_nome(linha.fornecedor), linha.data)
+            sem_numero.setdefault(chave, []).append(linha)
+    grupos: list[tuple[str | None, list[_LinhaControle]]] = []
 
     numeros_existentes = {r.numero for r in base.rfqs}
     feriados = base.datas_feriados() | {f.data for f in novos_feriados}
@@ -315,41 +319,65 @@ def importar_planilha(
             if numero_rfq in numeros_existentes:
                 relatorio.rfqs_existentes += 1
                 continue
-            primeira = linhas_rfq[0]
-            nomes_projeto = Counter(l.projeto for l in linhas_rfq if l.projeto)
-            if len(nomes_projeto) > 1:
-                avisos.append(
-                    f"{numero_rfq} tem itens de {len(nomes_projeto)} projetos "
-                    f"({', '.join(nomes_projeto)}); usado o mais frequente."
-                )
-            nome_projeto = nomes_projeto.most_common(1)[0][0] if nomes_projeto else "(sem projeto)"
-            cliente = next((l.cliente for l in linhas_rfq if l.projeto == nome_projeto and l.cliente), "")
-            projeto = cadastros.projeto(nome_projeto, cliente, origem=f"linha {primeira.linha}")
-            if not primeira.fornecedor:
-                avisos.append(f"{numero_rfq} (linha {primeira.linha}) está sem fornecedor.")
-            fornecedor = cadastros.fornecedor(primeira.fornecedor or "(sem fornecedor)", origem=f"linha {primeira.linha}")
-            solicitante = cadastros.solicitante(primeira.solicitante) if primeira.solicitante else None
-            datas = [l.data for l in linhas_rfq if l.data]
-            data_envio = min(datas) if datas else None
-            if not data_envio:
-                avisos.append(f"{numero_rfq} (linha {primeira.linha}) está sem data válida.")
+            numeros_existentes.add(numero_rfq)
+            grupos.append((numero_rfq, linhas_rfq))
+    grupos.extend((None, linhas_rfq) for linhas_rfq in sem_numero.values())
 
-            itens = [l.item for l in linhas_rfq if not l.item.vazio()]
-            chave = (projeto.id, _assinatura_itens(itens))
-            pacote = pacotes.get(chave)
-            if pacote is None:
-                pacote = Pacote(
-                    projeto_id=projeto.id,
-                    solicitante_id=solicitante.id if solicitante else None,
-                    data=data_envio or date.today(),
-                    prazo_dias_uteis=prazo_padrao,
-                    itens=itens,
-                    observacoes="Importado da planilha RFQ_Controle.xlsm",
-                )
-                pacotes[chave] = pacote
-            elif data_envio and data_envio < pacote.data:
-                pacote.data = data_envio
+    novas_numeradas: list[str] = []
+    for numero_rfq, linhas_rfq in grupos:
+        nova = numero_rfq is None
+        if nova:
+            numero_rfq = proximo_numero(base, reservados=numeros_existentes)
+            numeros_existentes.add(numero_rfq)
+            novas_numeradas.append(numero_rfq)
+        primeira = linhas_rfq[0]
+        nomes_projeto = Counter(l.projeto for l in linhas_rfq if l.projeto)
+        if len(nomes_projeto) > 1:
+            avisos.append(
+                f"{numero_rfq} tem itens de {len(nomes_projeto)} projetos "
+                f"({', '.join(nomes_projeto)}); usado o mais frequente."
+            )
+        nome_projeto = nomes_projeto.most_common(1)[0][0] if nomes_projeto else "(sem projeto)"
+        cliente = next((l.cliente for l in linhas_rfq if l.projeto == nome_projeto and l.cliente), "")
+        projeto = cadastros.projeto(nome_projeto, cliente, origem=f"linha {primeira.linha}")
+        if not primeira.fornecedor:
+            avisos.append(f"{numero_rfq} (linha {primeira.linha}) está sem fornecedor.")
+        fornecedor = cadastros.fornecedor(primeira.fornecedor or "(sem fornecedor)", origem=f"linha {primeira.linha}")
+        solicitante = cadastros.solicitante(primeira.solicitante) if primeira.solicitante else None
+        datas = [l.data for l in linhas_rfq if l.data]
+        data_envio = min(datas) if datas else None
+        if not data_envio and not nova:
+            avisos.append(f"{numero_rfq} (linha {primeira.linha}) está sem data válida.")
 
+        itens = [l.item for l in linhas_rfq if not l.item.vazio()]
+        chave = (projeto.id, _assinatura_itens(itens))
+        pacote = pacotes.get(chave)
+        if pacote is None:
+            pacote = Pacote(
+                projeto_id=projeto.id,
+                solicitante_id=solicitante.id if solicitante else None,
+                data=data_envio or date.today(),
+                prazo_dias_uteis=prazo_padrao,
+                itens=itens,
+                observacoes="Importado da planilha RFQ_Controle.xlsm",
+            )
+            pacotes[chave] = pacote
+        elif data_envio and data_envio < pacote.data:
+            pacote.data = data_envio
+
+        linhas_texto = f"linhas {primeira.linha}–{linhas_rfq[-1].linha}"
+        if nova:
+            # Sem número na planilha: RFQ nova, em rascunho, pronta para o envio dos e-mails.
+            rfq = RFQ(
+                numero=numero_rfq,
+                pacote_id=pacote.id,
+                fornecedor_id=fornecedor.id,
+                idioma=fornecedor.idioma,
+                data_criacao=data_envio or date.today(),
+                moeda=base.configuracoes.moeda_padrao,
+                historico=[Evento(descricao=f"Criada pela importação em massa ({Path(caminho).name}, {linhas_texto})")],
+            )
+        else:
             rfq = RFQ(
                 numero=numero_rfq,
                 pacote_id=pacote.id,
@@ -363,14 +391,13 @@ def importar_planilha(
                 historico=[
                     Evento(
                         descricao=(
-                            f"Importada da planilha {Path(caminho).name} (linhas {primeira.linha}–{linhas_rfq[-1].linha}); "
+                            f"Importada da planilha {Path(caminho).name} ({linhas_texto}); "
                             "prazo estimado pela regra de dias úteis."
                         )
                     )
                 ],
             )
-            numeros_existentes.add(numero_rfq)
-            novas_rfqs.append(rfq)
+        novas_rfqs.append(rfq)
 
     for pacote in pacotes.values():
         projeto = next(p for p in cadastros.projetos.values() if p.id == pacote.projeto_id)
@@ -400,17 +427,23 @@ def importar_planilha(
     relatorio.solicitantes_criados = len(cadastros.novos_solicitantes)
     relatorio.feriados_criados = len(novos_feriados)
     relatorio.pacotes_criados = len(pacotes)
-    relatorio.rfqs_importadas = len(novas_rfqs)
+    relatorio.rfqs_importadas = len(novas_rfqs) - len(novas_numeradas)
+    relatorio.rfqs_novas = len(novas_numeradas)
     sem_email = [f.nome for f in cadastros.fornecedores.values() if not f.emails_para()]
     if sem_email:
         avisos.append(
-            f"{len(sem_email)} fornecedor(es) sem e-mail de destinatário — complete em Fornecedores "
+            f"{len(sem_email)} fornecedor(es) sem e-mail de destinatário — complete na Base de dados (Cadastro de Fornecedores) "
             "antes de gerar os e-mails."
         )
-    if novas_rfqs:
+    if relatorio.rfqs_importadas:
         avisos.append(
             "As RFQs importadas ficaram com status 'Enviada' (a planilha não registrava respostas). "
             "Atualize o status das que já foram respondidas ou encerradas."
+        )
+    if novas_numeradas:
+        avisos.append(
+            f"{len(novas_numeradas)} RFQ(s) nova(s) em rascunho ({novas_numeradas[0]} a {novas_numeradas[-1]}): "
+            "use 'Enviar e-mails' para disparar."
         )
     progresso("Importação concluída.")
     return relatorio

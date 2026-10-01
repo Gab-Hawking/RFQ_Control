@@ -179,6 +179,42 @@ QPushButton#novaSolicitacao {{
 QPushButton#novaSolicitacao:hover {{
     background: #3987e5;
 }}
+QPushButton#botaoLateral {{
+    background: transparent;
+    border: 1px solid #34465d;
+    color: #ffffff;
+    padding: 8px 12px;
+    text-align: left;
+}}
+QPushButton#botaoLateral:hover {{
+    background: #223044;
+    border-color: #4a5f7a;
+}}
+QPushButton#botaoLateral:checked {{
+    background: #223044;
+    border: 1px solid {DESTAQUE};
+}}
+QTabWidget#abasPlanilha::pane {{
+    border: 1px solid {BORDA};
+    border-radius: 6px;
+    background: {SUPERFICIE};
+}}
+QTabWidget#abasPlanilha QTabBar::tab {{
+    background: #e9ebef;
+    border: 1px solid {BORDA};
+    border-top: none;
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 6px;
+    padding: 6px 16px;
+    margin-right: 2px;
+    color: {TINTA_SECUNDARIA};
+}}
+QTabWidget#abasPlanilha QTabBar::tab:selected {{
+    background: {SUPERFICIE};
+    color: {TINTA};
+    font-weight: 600;
+    border-bottom: 3px solid {DESTAQUE};
+}}
 QToolButton {{
     border: 1px solid transparent;
     border-radius: 4px;

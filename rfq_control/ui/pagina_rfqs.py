@@ -73,8 +73,9 @@ class PaginaRFQs(QWidget):
         botoes = QHBoxLayout()
         botoes.addWidget(botao("+ Nova solicitação", self._nova, primario=True, dica="Ctrl+N"))
         botoes.addWidget(botao("Abrir", self._abrir, dica="Enter ou duplo clique"))
-        botoes.addWidget(botao("E-mail PT", lambda: self._emails(Idioma.PT), dica="Ctrl+E"))
-        botoes.addWidget(botao("E-mail EN", lambda: self._emails(Idioma.EN), dica="Ctrl+R"))
+        botoes.addWidget(botao("Enviar e-mails…", self._enviar, dica="Escolher a RFQ e os fornecedores (Ctrl+R)"))
+        botoes.addWidget(botao("Gerar e-mail", lambda: self._emails(None),
+                               dica="E-mail das RFQs selecionadas, no idioma de cada fornecedor (Ctrl+E)"))
         botoes.addWidget(botao("Cobrança", lambda: self._emails(None, TipoModelo.COBRANCA),
                                dica="E-mail lembrando o prazo às RFQs selecionadas"))
         botoes.addWidget(botao("Alterar status", self._status))
@@ -110,8 +111,8 @@ class PaginaRFQs(QWidget):
         self.contador.setObjectName("dica")
         layout.addWidget(self.contador)
 
-        QShortcut(QKeySequence("Ctrl+E"), self, activated=lambda: self._emails(Idioma.PT))
-        QShortcut(QKeySequence("Ctrl+R"), self, activated=lambda: self._emails(Idioma.EN))
+        QShortcut(QKeySequence("Ctrl+E"), self, activated=lambda: self._emails(None))
+        QShortcut(QKeySequence("Ctrl+R"), self, activated=self._enviar)
         QShortcut(QKeySequence("Ctrl+F"), self, activated=self.busca.setFocus)
 
     # ------------------------------------------------ valores das colunas
@@ -217,6 +218,13 @@ class PaginaRFQs(QWidget):
 
     def _abrir(self) -> None:
         self._abrir_rfq(self.tabela.atual())
+
+    def _enviar(self) -> None:
+        atual = self.tabela.atual()
+        selecionadas = [r for r in self.tabela.selecionados() if atual and r.pacote_id == atual.pacote_id]
+        fornecedores = [r.fornecedor_id for r in selecionadas] or None
+        if acoes.enviar_emails(self.janela, atual.pacote_id if atual else None, fornecedores):
+            self.atualizar(recarregar_filtros=False)
 
     def _emails(self, idioma: Idioma | None, tipo: TipoModelo = TipoModelo.RFQ) -> None:
         if acoes.gerar_emails(self.janela, self.tabela.selecionados(), idioma, tipo):

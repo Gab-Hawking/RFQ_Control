@@ -15,8 +15,7 @@ def test_primeira_execucao_cria_um_arquivo_por_colecao(base, pasta_dados):
     assert esperados <= {p.name for p in pasta_dados.glob("*.json")}
     assert base.primeira_execucao
     assert {(m.tipo, m.idioma.value) for m in base.modelos_email} == {
-        (TipoModelo.RFQ, "PT"), (TipoModelo.RFQ, "EN"),
-        (TipoModelo.COBRANCA, "PT"), (TipoModelo.COBRANCA, "EN"),
+        (tipo, idioma) for tipo in TipoModelo for idioma in ("PT", "ES", "EN")
     }
     ano = date.today().year
     assert date(ano, 12, 25) in base.datas_feriados()
@@ -92,3 +91,16 @@ def test_backups_antigos_sao_removidos(base, monkeypatch):
     base.backup("antes_importacao_x")
     restantes = sorted(p.name for p in base.pasta_backup.iterdir())
     assert restantes == ["antes_importacao_x", "copia_3", "copia_4"]
+
+
+def test_base_antiga_recebe_modelos_que_faltam(base, pasta_dados):
+    # simula uma base da versão 0.1 (sem os modelos em espanhol)
+    sem_espanhol = [m.id for m in base.modelos_email if m.idioma.value == "ES"]
+    base.modelos_email.remover_varios(sem_espanhol)
+    editado = next(m for m in base.modelos_email if m.idioma.value == "PT")
+    base.modelos_email.salvar(editado.model_copy(update={"assunto": "Assunto personalizado"}))
+
+    reaberta = BaseDados.abrir(pasta_dados)
+    idiomas = {m.idioma.value for m in reaberta.modelos_email}
+    assert idiomas == {"PT", "ES", "EN"} and len(reaberta.modelos_email) == 6
+    assert reaberta.modelos_email.obter(editado.id).assunto == "Assunto personalizado"

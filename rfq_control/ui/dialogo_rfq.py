@@ -132,8 +132,8 @@ class DialogoRFQ(QDialog):
 
         # ------------------------------------------------ botões
         acoes = QHBoxLayout()
-        acoes.addWidget(botao("E-mail em português", lambda: self._email(Idioma.PT), dica="Ctrl+E na lista de RFQs"))
-        acoes.addWidget(botao("E-mail em inglês", lambda: self._email(Idioma.EN), dica="Ctrl+R na lista de RFQs"))
+        acoes.addWidget(botao("Gerar e-mail", lambda: self._email(self.idioma.currentData()),
+                              dica="Abre o e-mail desta RFQ no idioma escolhido acima"))
         acoes.addWidget(botao("Cobrança", self._cobranca, dica="Gera e-mail lembrando o fornecedor do prazo"))
         acoes.addWidget(botao("Selecionar como vencedora", self._vencedora))
         acoes.addStretch()
@@ -236,12 +236,12 @@ class DialogoRFQ(QDialog):
             self.janela.mensagem(f"{self.rfq.numero} salva.")
             self.accept()
 
-    def _email(self, idioma: Idioma, tipo: TipoModelo = TipoModelo.RFQ) -> None:
+    def _email(self, idioma, tipo: TipoModelo = TipoModelo.RFQ) -> None:
         from .acoes import gerar_emails
 
         if not self._gravar_se_alterado():
             return
-        if gerar_emails(self.janela, [self.rfq], idioma, tipo):
+        if gerar_emails(self.janela, [self.rfq], Idioma(idioma), tipo):
             self.alterou = True
             self._carregar()
 

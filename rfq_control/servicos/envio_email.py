@@ -38,6 +38,7 @@ class ResultadoEmail:
     via_outlook: bool
     arquivo_eml: Path | None = None
     aviso: str = ""
+    enviado: bool = False  # True = enviado direto; False = aberto para revisão
 
 
 def _nome_arquivo_seguro(texto: str) -> str:
@@ -97,25 +98,35 @@ def inserir_antes_da_assinatura(html_outlook: str, corpo_html: str) -> str:
     return html_outlook[:fim] + corpo_html + "<br>" + html_outlook[fim:]
 
 
-def abrir_no_outlook(email: EmailMontado) -> None:
-    """Cria o rascunho no Outlook da área de trabalho (como a macro antiga)."""
+def abrir_no_outlook(email: EmailMontado, enviar: bool = False) -> None:
+    """Cria o e-mail no Outlook da área de trabalho, como a macro antiga.
+
+    Com ``enviar=False`` o rascunho é exibido para revisão; com ``enviar=True`` é enviado na hora.
+    Nos dois casos a assinatura padrão do Outlook é incluída.
+    """
     try:
         import win32com.client  # type: ignore[import-not-found]
     except ImportError as erro:
         raise ErroOutlook("A automação do Outlook só está disponível no Windows.") from erro
     try:
         outlook = win32com.client.Dispatch("Outlook.Application")
-        rascunho = outlook.CreateItem(0)  # 0 = olMailItem
-        rascunho.Display()  # exibe primeiro para o Outlook inserir a assinatura padrão
-        html_com_assinatura = rascunho.HTMLBody or ""
-        rascunho.To = "; ".join(email.para)
-        rascunho.CC = "; ".join(email.copia)
-        rascunho.Subject = email.assunto
-        rascunho.HTMLBody = inserir_antes_da_assinatura(html_com_assinatura, email.html)
+        mensagem = outlook.CreateItem(0)  # 0 = olMailItem
+        if enviar:
+            mensagem.GetInspector  # noqa: B018 - carrega a assinatura padrão sem abrir a janela
+        else:
+            mensagem.Display()  # exibe primeiro para o Outlook inserir a assinatura padrão
+        html_com_assinatura = mensagem.HTMLBody or ""
+        mensagem.To = "; ".join(email.para)
+        mensagem.CC = "; ".join(email.copia)
+        mensagem.Subject = email.assunto
+        mensagem.HTMLBody = inserir_antes_da_assinatura(html_com_assinatura, email.html)
         for anexo in email.anexos:
-            rascunho.Attachments.Add(str(anexo))
+            mensagem.Attachments.Add(str(anexo))
+        if enviar:
+            mensagem.Send()
     except Exception as erro:  # erros COM vêm como pywintypes.com_error
-        raise ErroOutlook(f"Não foi possível abrir o Outlook: {erro}") from erro
+        acao = "enviar pelo" if enviar else "abrir o"
+        raise ErroOutlook(f"Não foi possível {acao} Outlook: {erro}") from erro
 
 
 def gerar_email_rfq(
@@ -125,8 +136,13 @@ def gerar_email_rfq(
     tipo: TipoModelo = TipoModelo.RFQ,
     abrir: bool = True,
     hoje: date | None = None,
+    enviar: bool = False,
 ) -> ResultadoEmail:
-    """Monta o e-mail da RFQ, abre para revisão e registra o envio na RFQ."""
+    """Monta o e-mail da RFQ e registra o envio na RFQ.
+
+    ``enviar=False``: abre o rascunho para revisão (Outlook, ou .eml como alternativa).
+    ``enviar=True``: envia direto pelo Outlook; se o Outlook falhar, nada é registrado.
+    """
     rfq = base.rfqs.obter(rfq_id)
     if not rfq:
         raise ErroNegocio("RFQ não encontrada.")
@@ -134,7 +150,15 @@ def gerar_email_rfq(
     config = base.configuracoes
 
     via_outlook, arquivo, aviso = False, None, ""
-    if config.metodo_email == MetodoEmail.OUTLOOK and abrir:
+    if enviar:
+        if config.metodo_email != MetodoEmail.OUTLOOK:
+            raise ErroNegocio("O envio automático usa o Outlook. Em Configurações, escolha abrir os e-mails via Outlook.")
+        try:
+            abrir_no_outlook(email, enviar=True)
+        except ErroOutlook as erro:
+            raise ErroNegocio(str(erro)) from erro
+        via_outlook = True
+    elif config.metodo_email == MetodoEmail.OUTLOOK and abrir:
         try:
             abrir_no_outlook(email)
             via_outlook = True
@@ -147,13 +171,18 @@ def gerar_email_rfq(
         if abrir:
             abrir_arquivo(arquivo)
 
-    canal = "Outlook" if via_outlook else "arquivo .eml"
+    if enviar:
+        acao = "enviado pelo Outlook"
+    else:
+        acao = "aberto para revisão (" + ("Outlook" if via_outlook else "arquivo .eml") + ")"
     if tipo == TipoModelo.COBRANCA:
         rfq = rfq.model_copy(deep=True)
-        rfq.registrar(f"E-mail de cobrança gerado ({email.idioma.rotulo}, {canal})")
+        rfq.registrar(f"E-mail de cobrança {acao} — {email.idioma.rotulo}")
         rfq = base.rfqs.salvar(rfq)
     else:
         rfq = registrar_envio(
-            base, rfq, email.idioma, f"E-mail de RFQ gerado ({email.idioma.rotulo}, {canal})", hoje, email.prazo
+            base, rfq, email.idioma, f"E-mail de RFQ {acao} — {email.idioma.rotulo}", hoje, email.prazo
         )
-    return ResultadoEmail(rfq=rfq, email=email, via_outlook=via_outlook, arquivo_eml=arquivo, aviso=aviso)
+    return ResultadoEmail(
+        rfq=rfq, email=email, via_outlook=via_outlook, arquivo_eml=arquivo, aviso=aviso, enviado=enviar
+    )

@@ -89,7 +89,7 @@ def test_gerar_eml_e_registrar_envio(base_populada, rfqs, monkeypatch):
     rfq = resultado.rfq
     assert rfq.status == StatusRFQ.ENVIADA
     assert rfq.data_envio == HOJE and rfq.prazo == date(2026, 10, 6)
-    assert "E-mail de RFQ gerado" in rfq.historico[-1].descricao
+    assert "E-mail de RFQ aberto para revisão (arquivo .eml)" in rfq.historico[-1].descricao
 
 
 def test_outlook_indisponivel_cai_para_eml(base_populada, rfqs, monkeypatch):
@@ -130,3 +130,65 @@ def test_inserir_antes_da_assinatura():
         '<html><body lang="PT-BR"><div>Assinatura</div></body></html>', "<p>Corpo</p>"
     )
     assert resultado.index("<p>Corpo</p>") < resultado.index("Assinatura")
+
+
+def test_email_em_espanhol(base_populada, rfqs):
+    fornecedor = base_populada.fornecedores.obter("f2")
+    base_populada.fornecedores.salvar(fornecedor.model_copy(update={"idioma": Idioma.ES}))
+    email = montar_email(base_populada, rfqs[1], hoje=HOJE)
+    assert email.idioma == Idioma.ES  # RFQ em rascunho segue o idioma atual do fornecedor
+    assert "Estimado/a Anna:" in email.html
+    assert "Plazo de respuesta: martes, 6 de octubre de 2026" in email.html
+    assert "Descripción" not in email.html  # coluna vazia não aparece
+    assert "Volumen anual" in email.html and "154.000" in email.html
+    assert "Proyecto" in email.html
+
+
+def test_rfq_enviada_mantem_idioma_do_envio(base_populada, rfqs, monkeypatch):
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda *_a, **_k: None)
+    envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE)  # PT
+    fornecedor = base_populada.fornecedores.obter("f1")
+    base_populada.fornecedores.salvar(fornecedor.model_copy(update={"idioma": Idioma.EN}))
+    rfq = base_populada.rfqs.obter(rfqs[0].id)
+    assert montar_email(base_populada, rfq, hoje=HOJE).idioma == Idioma.PT
+    assert montar_email(base_populada, rfq, Idioma.EN, hoje=HOJE).idioma == Idioma.EN
+
+
+@pytest.mark.parametrize("texto, esperado", [
+    ("Português", "PT"), ("portugues", "PT"), ("Espanhol", "ES"), ("Español", "ES"), ("spanish", "ES"),
+    ("Inglês", "EN"), ("ENGLISH", "EN"), ("en", "EN"),
+])
+def test_idioma_de_texto(texto, esperado):
+    assert Idioma.de_texto(texto).value == esperado
+
+
+def test_idioma_invalido():
+    with pytest.raises(ValueError, match="idioma inválido"):
+        Idioma.de_texto("Francês")
+
+
+def test_envio_direto_pelo_outlook(base_populada, rfqs, monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda email, enviar=False: chamadas.append(enviar))
+    resultado = envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE, enviar=True)
+    assert chamadas == [True] and resultado.enviado and resultado.via_outlook
+    assert resultado.rfq.status == StatusRFQ.ENVIADA
+    assert "enviado pelo Outlook" in resultado.rfq.historico[-1].descricao
+
+
+def test_envio_direto_com_falha_nao_registra(base_populada, rfqs, monkeypatch):
+    def falha(email, enviar=False):
+        raise envio_email.ErroOutlook("Outlook fechado.")
+
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", falha)
+    with pytest.raises(srv.ErroNegocio, match="Outlook fechado"):
+        envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE, enviar=True)
+    assert base_populada.rfqs.obter(rfqs[0].id).status == StatusRFQ.RASCUNHO
+
+
+def test_envio_direto_exige_outlook(base_populada, rfqs):
+    base_populada.salvar_configuracoes(
+        base_populada.configuracoes.model_copy(update={"metodo_email": MetodoEmail.EML})
+    )
+    with pytest.raises(srv.ErroNegocio, match="usa o Outlook"):
+        envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE, enviar=True)

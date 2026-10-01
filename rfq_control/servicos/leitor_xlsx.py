@@ -157,15 +157,17 @@ class LeitorXlsx:
         self,
         aba: str,
         inicio: int = 1,
-        coluna_chave: str = "A",
+        coluna_chave: str | tuple[str, ...] = "A",
         parar_apos_vazias: int | None = None,
         progresso: Callable[[int], None] | None = None,
     ) -> Iterator[tuple[int, dict[str, Valor]]]:
         """Gera (número da linha, {coluna: valor}) das linhas com algum valor.
 
         Com ``parar_apos_vazias``, interrompe a leitura depois de tantas linhas
-        seguidas sem valor na ``coluna_chave`` (fim dos dados reais).
+        seguidas sem valor na ``coluna_chave`` (fim dos dados reais). Com várias
+        colunas-chave, basta uma delas ter valor para a linha contar.
         """
+        chaves = (coluna_chave,) if isinstance(coluna_chave, str) else tuple(coluna_chave)
         if aba not in self._abas:
             raise ErroPlanilha(f"A aba '{aba}' não existe na planilha.")
         self._textos_compartilhados()
@@ -203,8 +205,10 @@ class LeitorXlsx:
                 if numero < inicio:
                     continue
                 if parar_apos_vazias is not None:
-                    chave = valores.get(coluna_chave)
-                    if chave is None or (isinstance(chave, str) and not chave.strip()):
+                    if not any(
+                        valores.get(c) is not None and not (isinstance(valores[c], str) and not valores[c].strip())
+                        for c in chaves
+                    ):
                         vazias += 1
                         if vazias >= parar_apos_vazias:
                             return
