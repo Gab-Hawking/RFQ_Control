@@ -97,24 +97,34 @@ def alterar_status(janela: JanelaPrincipal, rfqs: list[RFQ]) -> bool:
     return ok
 
 
+def enviar_emails(
+    janela: JanelaPrincipal,
+    pacote_id: str | None = None,
+    fornecedor_ids: list[str] | None = None,
+    tipo: TipoModelo = TipoModelo.RFQ,
+) -> bool:
+    """Abre a tela de envio: escolher a RFQ e os fornecedores que vão receber o e-mail padrão."""
+    from .dialogo_envio import DialogoEnvio
+
+    if not len(janela.base.pacotes):
+        informar(janela, "Ainda não há RFQs. Crie uma em '+ Nova solicitação' ou importe na Base de dados.")
+        return False
+    dialogo = DialogoEnvio(janela, pacote_id, fornecedor_ids, tipo)
+    return dialogo.exec() == QDialog.DialogCode.Accepted
+
+
 def nova_solicitacao(janela: JanelaPrincipal) -> bool:
     from .dialogo_pacote import DialogoPacote
 
     if not len(janela.base.projetos):
-        informar(janela, "Cadastre ao menos um projeto antes (menu Projetos, ou botão '+' ao lado do projeto).")
+        informar(janela, "Cadastre ao menos um projeto antes (Base de dados → Cadastro de Projetos, ou botão '+' ao lado do projeto).")
     dialogo = DialogoPacote(janela)
     if dialogo.exec() != QDialog.DialogCode.Accepted:
         return False
     rfqs = dialogo.rfqs_criadas
-    numeros = ", ".join(r.numero for r in rfqs)
-    janela.mensagem(f"Pacote criado com {len(rfqs)} RFQ(s): {numeros}")
-    if rfqs and confirmar(
-        janela,
-        f"{len(rfqs)} RFQ(s) criada(s): {numeros}.\n\nDeseja gerar os e-mails agora?",
-        "RFQs criadas",
-        "Gerar e-mails",
-    ):
-        gerar_emails(janela, [janela.base.rfqs.obter(r.id) for r in rfqs])
+    janela.mensagem(f"Pacote criado com {len(rfqs)} RFQ(s): {', '.join(r.numero for r in rfqs)}")
+    if rfqs:
+        enviar_emails(janela, dialogo.original.id, [r.fornecedor_id for r in rfqs])
     return True
 
 
@@ -129,10 +139,7 @@ def abrir_pacote(janela: JanelaPrincipal, pacote_id: str, aba: str = "itens") ->
     if dialogo.exec() != QDialog.DialogCode.Accepted:
         return False
     if dialogo.rfqs_criadas:
-        numeros = ", ".join(r.numero for r in dialogo.rfqs_criadas)
-        if confirmar(janela, f"Novas RFQs: {numeros}.\n\nDeseja gerar os e-mails agora?", "RFQs criadas",
-                     "Gerar e-mails"):
-            gerar_emails(janela, [janela.base.rfqs.obter(r.id) for r in dialogo.rfqs_criadas])
+        enviar_emails(janela, pacote_id, [r.fornecedor_id for r in dialogo.rfqs_criadas])
     else:
         janela.mensagem("Pacote salvo.")
     return True

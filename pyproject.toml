@@ -1,6 +1,6 @@
 [project]
 name = "rfq-control"
-version = "0.1.0"
+version = "0.2.0"
 description = "Controle de RFQs enviadas a fornecedores (substitui a planilha RFQ_Controle.xlsm)"
 requires-python = ">=3.11"
 

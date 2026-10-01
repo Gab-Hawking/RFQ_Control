@@ -15,7 +15,7 @@ from datetime import date
 from pathlib import Path
 
 from ..armazenamento import BaseDados
-from ..modelos import RFQ, Idioma, Item, ModeloEmail, Pacote, Projeto, TipoModelo
+from ..modelos import RFQ, Fornecedor, Idioma, Item, ModeloEmail, Pacote, Projeto, StatusRFQ, TipoModelo
 from ..padroes import modelos_email_padrao
 from .formatos import data_por_extenso, numero_por_idioma
 from .rfq import ErroNegocio, caminhos_anexos, prazo_para
@@ -43,6 +43,24 @@ _ROTULOS = {
         "sop": "SOP",
         "lifetime": "Lifetime (anos)",
         "contato": "fornecedor",
+        "empresa": "nossa empresa",
+    },
+    Idioma.ES: {
+        "ref_op": "OP - Ref",
+        "ref_cdc": "CDC - Ref",
+        "descricao": "Descripción",
+        "unidade": "UM",
+        "quantidade": "Cant.",
+        "volume_anual": "Volumen anual",
+        "capacidade": "¿Confirma capacidad del 120% del volumen anual? [S/N]",
+        "cobertura": "Cobertura máxima (%)",
+        "planta": "Planta",
+        "projeto": "Proyecto",
+        "cliente": "Cliente",
+        "sop": "SOP",
+        "lifetime": "Vida útil (años)",
+        "contato": "proveedor",
+        "empresa": "nuestra empresa",
     },
     Idioma.EN: {
         "ref_op": "OP - Ref",
@@ -59,6 +77,7 @@ _ROTULOS = {
         "sop": "SOP",
         "lifetime": "Lifetime (years)",
         "contato": "supplier",
+        "empresa": "Our company",
     },
 }
 
@@ -194,6 +213,11 @@ def _sem_repetidos(emails: list[str], excluir: set[str] = frozenset()) -> list[s
     return resultado
 
 
+def idioma_padrao(rfq: RFQ, fornecedor: Fornecedor) -> Idioma:
+    """RFQ ainda não enviada segue o idioma atual do fornecedor; já enviada, o idioma em que foi enviada."""
+    return fornecedor.idioma if rfq.status == StatusRFQ.RASCUNHO else rfq.idioma
+
+
 def montar_email(
     base: BaseDados,
     rfq: RFQ,
@@ -201,13 +225,13 @@ def montar_email(
     tipo: TipoModelo = TipoModelo.RFQ,
     hoje: date | None = None,
 ) -> EmailMontado:
-    idioma = Idioma(idioma or rfq.idioma)
     pacote: Pacote | None = base.pacotes.obter(rfq.pacote_id)
     fornecedor = base.fornecedores.obter(rfq.fornecedor_id)
     if not pacote:
         raise ErroNegocio(f"O pacote da {rfq.numero} não foi encontrado.")
     if not fornecedor:
         raise ErroNegocio(f"O fornecedor da {rfq.numero} não foi encontrado.")
+    idioma = Idioma(idioma or idioma_padrao(rfq, fornecedor))
     projeto = base.projetos.obter(pacote.projeto_id) or Projeto(nome="?")
     solicitante = base.solicitantes.obter(pacote.solicitante_id)
     config = base.configuracoes
@@ -216,7 +240,7 @@ def montar_email(
     if not para:
         raise ErroNegocio(
             f"O fornecedor {fornecedor.nome} não tem e-mail de destinatário (Para) cadastrado. "
-            "Cadastre um contato em Fornecedores."
+            "Cadastre o e-mail na Base de dados (Cadastro de Fornecedores)."
         )
     copia = fornecedor.emails_copia() + config.emails_copia_padrao()
     if config.copiar_solicitante and solicitante and solicitante.email:
@@ -228,7 +252,7 @@ def montar_email(
     variaveis = {
         "contato": fornecedor.nome_contato() or rotulos["contato"],
         "fornecedor": fornecedor.nome,
-        "empresa": config.empresa or ("nossa empresa" if idioma == Idioma.PT else "Our company"),
+        "empresa": config.empresa or rotulos["empresa"],
         "rfq": rfq.numero,
         "projeto": projeto.nome,
         "cliente": projeto.cliente,

@@ -37,9 +37,14 @@ O CI (`.github/workflows/build.yml`) roda os testes no Linux e no Windows e publ
 - `rfq_control/armazenamento.py` — `BaseDados` com uma `Colecao` por arquivo JSON; gravação atômica,
   validação ao carregar, backup diário em `dados/backup`.
 - `rfq_control/servicos/` — regras sem interface (testáveis): `rfq.py` (numeração, pacotes, status,
-  indicadores), `email_rfq.py` (montagem), `envio_email.py` (Outlook/.eml), `importacao_legado.py`,
-  `leitor_xlsx.py` (streaming), `exportacao.py`, `cadastros.py`, `dias_uteis.py`, `formatos.py`.
-- `rfq_control/ui/` — telas; erros de negócio viram mensagem via `componentes.executar`.
+  indicadores), `email_rfq.py` (montagem), `envio_email.py` (Outlook/.eml, revisão ou envio direto),
+  `disparo.py` (escolher RFQ + fornecedores e enviar), `abas.py` (colunas das abas da Base de dados,
+  conversão linha ↔ registro, importação em massa Excel/CSV, modelos), `importacao_legado.py` (aba Controle;
+  linhas sem número viram RFQs novas), `leitor_xlsx.py` (streaming), `exportacao.py`, `cadastros.py`,
+  `dias_uteis.py`, `formatos.py`.
+- `rfq_control/ui/` — telas; erros de negócio viram mensagem via `componentes.executar`. A tela
+  `pagina_base_dados.py` mostra as antigas abas da planilha; as de cadastro usam a grade editável de
+  `grade.py`, guiada pelas definições de `servicos/abas.py` (para mudar colunas, mude lá).
 
 ## Conceitos de domínio
 
@@ -48,9 +53,11 @@ O CI (`.github/workflows/build.yml`) roda os testes no Linux e no Windows e publ
 - **RFQ**: um pacote enviado a **um** fornecedor. Número `RFQ{AAAA}{NNN}` (ex.: `RFQ2026001`), sequencial por ano, gerado pelo sistema.
 - **Prazo**: data de envio + 4 dias úteis (sem fins de semana e feriados), gravado na RFQ ao gerar o e-mail.
 - **Atrasada** não é status gravado: é a situação calculada de uma RFQ `Enviada` com prazo vencido.
+- **Idioma** (Português, Espanhol, Inglês) é do fornecedor; RFQs em rascunho acompanham o idioma dele,
+  RFQs já enviadas guardam o idioma em que foram enviadas.
 
 ## Convenções
 
-- Idioma: código de domínio, interface, documentação e mensagens de commit em **português (PT-BR)**; e-mails para fornecedores em PT ou EN.
+- Idioma: código de domínio, interface, documentação e mensagens de commit em **português (PT-BR)**; e-mails para fornecedores em PT, ES ou EN.
 - Nunca versionar a planilha original nem dados reais extraídos dela (classificação C2). Use dados fictícios em seeds e testes.
 - Segredos, se um dia existirem, apenas em variáveis de ambiente.

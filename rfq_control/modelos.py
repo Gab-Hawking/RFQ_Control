@@ -8,6 +8,7 @@ ao carregar os arquivos quanto ao salvar pelo aplicativo.
 from __future__ import annotations
 
 import re
+import unicodedata
 import uuid
 from datetime import date, datetime
 from enum import Enum
@@ -45,11 +46,31 @@ def _obrigatorio(valor: str, campo: str) -> str:
 
 class Idioma(str, Enum):
     PT = "PT"
+    ES = "ES"
     EN = "EN"
 
     @property
     def rotulo(self) -> str:
-        return {"PT": "Português", "EN": "Inglês"}[self.value]
+        return {"PT": "Português", "ES": "Espanhol", "EN": "Inglês"}[self.value]
+
+    @classmethod
+    def de_texto(cls, texto: str | None) -> Idioma:
+        """Aceita 'Português', 'Espanhol', 'Inglês', 'PT', 'es', 'English', 'Español'…"""
+        chave = "".join(
+            c for c in unicodedata.normalize("NFD", (texto or "").strip().casefold())
+            if unicodedata.category(c) != "Mn"
+        )
+        for idioma, apelidos in _APELIDOS_IDIOMA.items():
+            if chave in apelidos:
+                return idioma
+        raise ValueError(f"idioma inválido: '{texto}' (use Português, Espanhol ou Inglês)")
+
+
+_APELIDOS_IDIOMA = {
+    Idioma.PT: {"pt", "pt-br", "ptbr", "portugues", "portuguese", "port", "br", "brasil"},
+    Idioma.ES: {"es", "espanhol", "espanol", "spanish", "castellano", "esp"},
+    Idioma.EN: {"en", "ingles", "english", "eng", "ing", "en-us", "en-gb"},
+}
 
 
 class StatusRFQ(str, Enum):
@@ -254,6 +275,7 @@ class Configuracoes(Modelo):
     copiar_solicitante: bool = False
     incluir_colunas_fornecedor: bool = True
     moeda_padrao: str = "BRL"
+    envio_automatico: bool = False  # True = envia direto pelo Outlook, sem abrir o rascunho
 
     @field_validator("prefixo_rfq")
     @classmethod

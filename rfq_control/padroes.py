@@ -22,6 +22,22 @@ Esta solicitação refere-se exclusivamente à fase de cotação do projeto e n�
 
 NOTA: Favor enviar a cotação de acordo com as documentações enviadas, contemplando o CBD e lead time."""
 
+CORPO_RFQ_ES = """Estimado/a {{contato}}:
+
+{{empresa}} está participando actualmente en un proceso de cotización con el cliente final para un nuevo proyecto.
+
+Por ello, solicitamos el envío de su mejor propuesta comercial para los ítems a continuación, con el fin de respaldar la elaboración de nuestra oferta al cliente.
+
+Esta solicitud se refiere exclusivamente a la fase de cotización del proyecto y no representa una nominación de proveedor ni un proceso de sourcing en este momento.
+
+{{tabela_itens}}
+
+{{tabela_projeto}}
+
+**Plazo de respuesta: {{prazo}}**
+
+NOTA: Por favor, envíe la cotización de acuerdo con la documentación enviada, incluyendo el CBD y el lead time."""
+
 CORPO_RFQ_EN = """Dear {{contato}},
 
 {{empresa}} is currently participating in a quotation process with the final customer for a new project.
@@ -51,6 +67,18 @@ Por gentileza, envie a sua proposta o quanto antes ou nos informe caso não seja
 {{tabela_projeto}}
 
 Ficamos no aguardo."""
+
+CORPO_COBRANCA_ES = """Estimado/a {{contato}}:
+
+Aún no hemos recibido su cotización referente a la {{rfq}}, cuyo plazo de respuesta era el {{prazo}}.
+
+Le pedimos que envíe su propuesta lo antes posible o nos informe si no le es posible cotizar los ítems a continuación.
+
+{{tabela_itens}}
+
+{{tabela_projeto}}
+
+Quedamos atentos a su respuesta."""
 
 CORPO_COBRANCA_EN = """Dear {{contato}},
 
@@ -83,7 +111,9 @@ VARIAVEIS_MODELO = {
 def modelos_email_padrao() -> list[ModeloEmail]:
     return [
         ModeloEmail(tipo=TipoModelo.RFQ, idioma=Idioma.PT, assunto=ASSUNTO_RFQ, corpo=CORPO_RFQ_PT),
+        ModeloEmail(tipo=TipoModelo.RFQ, idioma=Idioma.ES, assunto=ASSUNTO_RFQ, corpo=CORPO_RFQ_ES),
         ModeloEmail(tipo=TipoModelo.RFQ, idioma=Idioma.EN, assunto=ASSUNTO_RFQ, corpo=CORPO_RFQ_EN),
         ModeloEmail(tipo=TipoModelo.COBRANCA, idioma=Idioma.PT, assunto=ASSUNTO_COBRANCA, corpo=CORPO_COBRANCA_PT),
+        ModeloEmail(tipo=TipoModelo.COBRANCA, idioma=Idioma.ES, assunto=ASSUNTO_COBRANCA, corpo=CORPO_COBRANCA_ES),
         ModeloEmail(tipo=TipoModelo.COBRANCA, idioma=Idioma.EN, assunto=ASSUNTO_COBRANCA, corpo=CORPO_COBRANCA_EN),
     ]

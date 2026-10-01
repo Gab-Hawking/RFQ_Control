@@ -251,6 +251,7 @@ class BaseDados:
         base.carregar()
         if base.primeira_execucao:
             base._criar_conteudo_inicial()
+        base._completar_modelos_email()
         return base
 
     def carregar(self) -> None:
@@ -280,6 +281,13 @@ class BaseDados:
         for colecao in self.colecoes:
             if not colecao.caminho.exists():
                 colecao.gravar()
+
+    def _completar_modelos_email(self) -> None:
+        """Acrescenta os modelos padrão que faltarem (ex.: espanhol em bases da versão anterior)."""
+        existentes = {(m.tipo, m.idioma) for m in self.modelos_email}
+        faltando = [m for m in modelos_email_padrao() if (m.tipo, m.idioma) not in existentes]
+        if faltando:
+            self.modelos_email.salvar_varios(faltando)
 
     def salvar_configuracoes(self, configuracoes: Configuracoes) -> Configuracoes:
         try:

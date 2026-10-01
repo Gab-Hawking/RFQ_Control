@@ -188,7 +188,7 @@ class ListaFornecedores(QWidget):
             item.setHidden(not all(t in alvo for t in termos))
 
     def _novo_fornecedor(self) -> None:
-        from .pagina_cadastros import DialogoFornecedor
+        from .dialogos_cadastro import DialogoFornecedor
 
         dialogo = DialogoFornecedor(self.janela, pai=self)
         if dialogo.exec() == QDialog.DialogCode.Accepted and dialogo.resultado:
@@ -389,7 +389,7 @@ class DialogoPacote(QDialog):
         self.info_projeto.setText("   ·   ".join(partes))
 
     def _novo_projeto(self) -> None:
-        from .pagina_cadastros import editar_projeto
+        from .dialogos_cadastro import editar_projeto
 
         projeto = editar_projeto(self.janela, None, self)
         if projeto:

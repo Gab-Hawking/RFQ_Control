@@ -48,7 +48,8 @@ class PaginaPacotes(QWidget):
         barra.addWidget(self.busca, 1)
         barra.addWidget(botao("+ Nova solicitação", self._nova, primario=True))
         barra.addWidget(botao("Abrir / editar", self._editar))
-        barra.addWidget(botao("Enviar a mais fornecedores", self._mais_fornecedores))
+        barra.addWidget(botao("Enviar e-mails…", self._enviar,
+                              dica="Escolher os fornecedores que vão receber esta RFQ"))
         barra.addWidget(botao("Duplicar", self._duplicar, dica="Cria um novo pacote com os mesmos itens e anexos"))
         barra.addWidget(botao("Excluir", self._excluir, perigo=True))
         layout.addLayout(barra)
@@ -151,8 +152,10 @@ class PaginaPacotes(QWidget):
     def _editar(self) -> None:
         self._abrir(self.tabela.atual())
 
-    def _mais_fornecedores(self) -> None:
-        self._abrir(self.tabela.atual(), "fornecedores")
+    def _enviar(self) -> None:
+        pacote = self.tabela.atual()
+        if acoes.enviar_emails(self.janela, pacote.id if pacote else None):
+            self.atualizar()
 
     def _abrir_rfq(self, rfq) -> None:
         if acoes.abrir_rfq(self.janela, rfq):

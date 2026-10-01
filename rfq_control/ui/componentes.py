@@ -23,12 +23,14 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, Q
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDateEdit,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QStyle,
@@ -99,6 +101,43 @@ def executar(pai: QWidget | None, funcao: Callable[[], Any]) -> tuple[bool, Any]
         log.exception("Erro inesperado")
         erro(pai, f"Ocorreu um erro inesperado:\n{problema}\n\nDetalhes foram gravados em dados/logs.")
     return False, None
+
+
+def mostrar_resultado(
+    pai: QWidget | None,
+    titulo: str,
+    resumo: str,
+    titulo_lista: str,
+    itens: list[str],
+    pasta_backup=None,
+) -> None:
+    """Janela de resultado (importação, envio de e-mails…) com resumo e lista de detalhes."""
+    dialogo = QDialog(pai)
+    dialogo.setWindowTitle(titulo)
+    dialogo.resize(720, 520)
+    layout = QVBoxLayout(dialogo)
+    cabecalho = QLabel(titulo)
+    cabecalho.setObjectName("tituloPagina")
+    layout.addWidget(cabecalho)
+    texto_resumo = QLabel(resumo)
+    texto_resumo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    layout.addWidget(texto_resumo)
+    if pasta_backup:
+        dica = QLabel(f"Cópia de segurança anterior: {pasta_backup}")
+        dica.setObjectName("dica")
+        dica.setWordWrap(True)
+        layout.addWidget(dica)
+    rotulo = QLabel(f"{titulo_lista} ({len(itens)})")
+    rotulo.setObjectName("tituloSecao")
+    layout.addWidget(rotulo)
+    detalhes = QPlainTextEdit("\n".join(f"• {item}" for item in itens) or "Nenhum.")
+    detalhes.setReadOnly(True)
+    layout.addWidget(detalhes, 1)
+    linha = QHBoxLayout()
+    linha.addStretch()
+    linha.addWidget(botao("Fechar", dialogo.accept, primario=True))
+    layout.addLayout(linha)
+    dialogo.exec()
 
 
 def botao(texto: str, ao_clicar: Callable | None = None, primario: bool = False, perigo: bool = False,
@@ -225,8 +264,14 @@ class FiltroBusca(QSortFilterProxyModel):
         self.setDynamicSortFilter(False)
 
     def definir_busca(self, texto: str) -> None:
-        self._termos = sem_acentos(texto).split()
-        self.invalidateFilter()
+        termos = sem_acentos(texto).split()
+        if hasattr(self, "beginFilterChange"):  # Qt 6.9+
+            self.beginFilterChange()
+            self._termos = termos
+            self.endFilterChange()
+        else:
+            self._termos = termos
+            self.invalidateFilter()
 
     def filterAcceptsRow(self, linha: int, pai: QModelIndex) -> bool:  # noqa: N802
         if not self._termos:

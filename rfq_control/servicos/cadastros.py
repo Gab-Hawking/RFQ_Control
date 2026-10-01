@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..armazenamento import BaseDados, Colecao
-from ..modelos import Feriado, Fornecedor, Projeto, Solicitante
+from ..modelos import Feriado, Fornecedor, Projeto, Solicitante, StatusRFQ
 from .dias_uteis import feriados_nacionais_brasil
 from .formatos import normalizar_nome
 from .rfq import ErroNegocio
@@ -18,7 +18,16 @@ def _nome_unico(colecao: Colecao, nome: str, identificador: str, tipo: str) -> N
 
 def salvar_fornecedor(base: BaseDados, fornecedor: Fornecedor) -> Fornecedor:
     _nome_unico(base.fornecedores, fornecedor.nome, fornecedor.id, "um fornecedor")
-    return base.fornecedores.salvar(fornecedor)
+    salvo = base.fornecedores.salvar(fornecedor)
+    # RFQs ainda não enviadas acompanham o idioma do fornecedor
+    rascunhos = [
+        r.model_copy(update={"idioma": salvo.idioma})
+        for r in base.rfqs_do_fornecedor(salvo.id)
+        if r.status == StatusRFQ.RASCUNHO and r.idioma != salvo.idioma
+    ]
+    if rascunhos:
+        base.rfqs.salvar_varios(rascunhos)
+    return salvo
 
 
 def salvar_projeto(base: BaseDados, projeto: Projeto) -> Projeto:

@@ -10,7 +10,6 @@ from PySide6.QtCore import QEventLoop, QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -30,7 +29,7 @@ from ..modelos import Configuracoes, MetodoEmail, email_valido, separar_emails
 from ..servicos.envio_email import abrir_arquivo
 from ..servicos.exportacao import exportar_rfqs
 from ..servicos.importacao_legado import RelatorioImportacao, importar_planilha
-from .componentes import botao, cabecalho_pagina, confirmar, erro, executar, informar
+from .componentes import botao, cabecalho_pagina, confirmar, erro, executar, informar, mostrar_resultado
 
 if TYPE_CHECKING:
     from .janela_principal import JanelaPrincipal
@@ -58,10 +57,9 @@ class _TrabalhoImportacao(QObject):
             self.concluido.emit(relatorio)
 
 
-def importar_planilha_antiga(janela: JanelaPrincipal) -> bool:
-    caminho, _ = QFileDialog.getOpenFileName(
-        janela, "Selecionar a planilha RFQ_Controle", str(Path.home()), "Planilhas Excel (*.xlsm *.xlsx)"
-    )
+def importar_planilha_antiga(janela: JanelaPrincipal, titulo: str = "Selecionar a planilha RFQ_Controle") -> bool:
+    """Importa uma planilha com a aba Controle (a planilha antiga ou o modelo de RFQs em massa)."""
+    caminho, _ = QFileDialog.getOpenFileName(janela, titulo, str(Path.home()), "Planilhas Excel (*.xlsm *.xlsx)")
     if not caminho:
         return False
     if not confirmar(
@@ -110,30 +108,8 @@ def importar_planilha_antiga(janela: JanelaPrincipal) -> bool:
 
 
 def mostrar_relatorio(janela: JanelaPrincipal, relatorio: RelatorioImportacao) -> None:
-    dialogo = QDialog(janela)
-    dialogo.setWindowTitle("Resultado da importação")
-    dialogo.resize(720, 520)
-    layout = QVBoxLayout(dialogo)
-    titulo = QLabel("Importação concluída")
-    titulo.setObjectName("tituloPagina")
-    layout.addWidget(titulo)
-    layout.addWidget(QLabel(relatorio.resumo()))
-    if relatorio.pasta_backup:
-        dica = QLabel(f"Cópia de segurança anterior à importação: {relatorio.pasta_backup}")
-        dica.setObjectName("dica")
-        dica.setWordWrap(True)
-        layout.addWidget(dica)
-    rotulo = QLabel(f"Avisos ({len(relatorio.avisos)})")
-    rotulo.setObjectName("tituloSecao")
-    layout.addWidget(rotulo)
-    avisos = QPlainTextEdit("\n".join(f"• {a}" for a in relatorio.avisos) or "Nenhum aviso.")
-    avisos.setReadOnly(True)
-    layout.addWidget(avisos, 1)
-    linha = QHBoxLayout()
-    linha.addStretch()
-    linha.addWidget(botao("Fechar", dialogo.accept, primario=True))
-    layout.addLayout(linha)
-    dialogo.exec()
+    mostrar_resultado(janela, "Importação concluída", relatorio.resumo(), "Avisos", relatorio.avisos,
+                      relatorio.pasta_backup)
 
 
 # ---------------------------------------------------------------- página
