@@ -85,6 +85,9 @@ class StatusRFQ(str, Enum):
 
 # Situação exibida quando uma RFQ enviada passa do prazo sem resposta.
 SITUACAO_ATRASADA = "Atrasada"
+# Situação de uma RFQ em rascunho cujo e-mail foi aberto para revisão, mas ainda não apareceu
+# nos Itens Enviados do Outlook (se o rascunho for apagado sem enviar, ela continua em rascunho).
+SITUACAO_AGUARDANDO = "Aguardando envio"
 
 # Status que contam como "o fornecedor respondeu".
 STATUS_COM_RESPOSTA = {
@@ -112,10 +115,31 @@ class Contato(Modelo):
         return valor.lower()
 
 
+class Commodity(Registro):
+    """Família de itens comprados (ex.: Ferramentaria) e o comprador da OP responsável por ela."""
+
+    nome: str
+    comprador: str = ""  # Commodity Buyer: vai em cópia nos e-mails dos pacotes desta commodity
+    email: str = ""
+
+    @field_validator("nome")
+    @classmethod
+    def _validar_nome(cls, valor: str) -> str:
+        return _obrigatorio(valor, "Nome da commodity")
+
+    @field_validator("email")
+    @classmethod
+    def _validar_email(cls, valor: str) -> str:
+        if valor and not email_valido(valor):
+            raise ValueError(f"e-mail inválido: {valor}")
+        return valor.lower()
+
+
 class Fornecedor(Registro):
     nome: str
     idioma: Idioma = Idioma.PT
-    categoria: str = ""
+    commodity_ids: list[str] = []
+    categoria: str = ""  # versões até 0.2: texto livre, migrado para commodities ao abrir a base
     observacoes: str = ""
     ativo: bool = True
     contatos: list[Contato] = []
@@ -179,6 +203,7 @@ class Feriado(Registro):
 class TipoModelo(str, Enum):
     RFQ = "Solicitação de cotação"
     COBRANCA = "Cobrança"
+    AGRADECIMENTO = "Agradecimento / status do projeto"
 
 
 class ModeloEmail(Registro):
@@ -215,6 +240,7 @@ class Pacote(Registro):
 
     titulo: str = ""
     projeto_id: str
+    commodity_id: str | None = None
     solicitante_id: str | None = None
     data: date = Field(default_factory=date.today)
     prazo_dias_uteis: int = Field(default=4, ge=0, le=60)
@@ -244,13 +270,22 @@ class RFQ(Registro):
     moeda: str = "BRL"
     lead_time: str = ""
     observacoes: str = ""
+    # E-mail aberto para revisão em: a RFQ só passa a Enviada quando o envio é confirmado.
+    aguardando_envio_desde: datetime | None = None
+    assunto_email: str = ""  # assunto do e-mail de RFQ (a cobrança responde a ele)
+    message_id: str = ""  # Message-ID do .eml gerado (a cobrança em .eml aponta para ele)
     historico: list[Evento] = []
 
     def atrasada(self, hoje: date | None = None) -> bool:
         hoje = hoje or date.today()
         return self.status == StatusRFQ.ENVIADA and self.prazo is not None and self.prazo < hoje
 
+    def aguardando_envio(self) -> bool:
+        return self.status == StatusRFQ.RASCUNHO and self.aguardando_envio_desde is not None
+
     def situacao(self, hoje: date | None = None) -> str:
+        if self.aguardando_envio():
+            return SITUACAO_AGUARDANDO
         return SITUACAO_ATRASADA if self.atrasada(hoje) else self.status.value
 
     def registrar(self, descricao: str) -> None:
@@ -273,7 +308,6 @@ class Configuracoes(Modelo):
     assinatura_html: str = ""
     copia_padrao: str = ""
     copiar_solicitante: bool = False
-    incluir_colunas_fornecedor: bool = True
     moeda_padrao: str = "BRL"
     envio_automatico: bool = False  # True = envia direto pelo Outlook, sem abrir o rascunho
 

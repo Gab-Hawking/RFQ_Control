@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt
+import logging
+import time
+
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -17,6 +21,8 @@ from PySide6.QtWidgets import (
 
 from .. import NOME_APP, __version__
 from ..armazenamento import BaseDados
+from ..servicos import envio_email
+from ..servicos.rfq import pendentes_de_envio
 from . import acoes
 from .componentes import botao, confirmar
 from .pagina_base_dados import PaginaBaseDados
@@ -34,8 +40,11 @@ MENU = [
     ("Configurações", "configuracoes"),
 ]
 
+log = logging.getLogger(__name__)
+INTERVALO_VERIFICACAO = 10  # segundos entre duas consultas aos Itens Enviados do Outlook
+
 # Abas da Base de dados que também podem ser abertas diretamente (ex.: ir_para("fornecedores")).
-ABAS_BASE = {"controle", "fornecedores", "projetos", "solicitantes", "feriados", "modelos"}
+ABAS_BASE = {"controle", "fornecedores", "commodities", "projetos", "solicitantes", "feriados", "modelos"}
 
 
 class JanelaPrincipal(QMainWindow):
@@ -71,12 +80,12 @@ class JanelaPrincipal(QMainWindow):
         nova.setObjectName("novaSolicitacao")
         lateral_layout.addWidget(nova)
         enviar = botao("Enviar e-mails", self.enviar_emails,
-                       dica="Escolher a RFQ e os fornecedores que vão receber o e-mail (Ctrl+E)")
+                       dica="Escolher a RFQ e os fornecedores que vão receber o e-mail (Ctrl+R na lista de RFQs)")
         enviar.setObjectName("botaoLateral")
         lateral_layout.addWidget(enviar)
         self.botao_base = botao("Base de dados", lambda: self.ir_para("base"),
-                                dica="As antigas abas da planilha: Controle, Fornecedores, Projetos, "
-                                     "Solicitantes, Feriados e Corpo do E-mail")
+                                dica="As antigas abas da planilha: Controle, Fornecedores, Commodities, "
+                                     "Projetos, Solicitantes, Feriados e Corpo do E-mail (Ctrl+B)")
         self.botao_base.setObjectName("botaoLateral")
         self.botao_base.setCheckable(True)
         lateral_layout.addWidget(self.botao_base)
@@ -115,6 +124,14 @@ class JanelaPrincipal(QMainWindow):
         QShortcut(QKeySequence("Ctrl+B"), self, activated=lambda: self.ir_para("base"))
         QShortcut(QKeySequence("F5"), self, activated=self.atualizar_pagina)
         self.ir_para("painel")
+
+        # E-mails abertos para revisão: confere nos Itens Enviados ao abrir o app e ao voltar para ele
+        # (ex.: depois de clicar em Enviar no Outlook).
+        self._ultima_verificacao = 0.0
+        aplicacao = QApplication.instance()
+        if aplicacao is not None:
+            aplicacao.applicationStateChanged.connect(self._estado_do_app)
+        QTimer.singleShot(1500, self.verificar_envios)
 
     # ------------------------------------------------ navegação
     def _mudar_pagina(self, item: QListWidgetItem | None, _anterior=None) -> None:
@@ -166,6 +183,27 @@ class JanelaPrincipal(QMainWindow):
     def mostrar_rfqs(self, situacao: str) -> None:
         pagina: PaginaRFQs = self.ir_para("rfqs")
         pagina.filtrar_situacao(situacao)
+
+    def _estado_do_app(self, estado) -> None:
+        if estado == Qt.ApplicationState.ApplicationActive:
+            self.verificar_envios()
+
+    def verificar_envios(self, forcar: bool = False) -> list:
+        """Passa para Enviada as RFQs aguardando envio cujo e-mail já está nos Itens Enviados."""
+        if not forcar and time.monotonic() - self._ultima_verificacao < INTERVALO_VERIFICACAO:
+            return []
+        self._ultima_verificacao = time.monotonic()
+        if not pendentes_de_envio(self.base):
+            return []
+        try:
+            confirmadas = envio_email.confirmar_envios_outlook(self.base)
+        except Exception:  # noqa: BLE001 - conferência automática: nunca atrapalha o uso
+            log.exception("Falha ao conferir os Itens Enviados do Outlook")
+            return []
+        if confirmadas:
+            self.mensagem("Envio confirmado no Outlook: " + ", ".join(r.numero for r in confirmadas))
+            self.atualizar_pagina()
+        return confirmadas
 
     def mensagem(self, texto: str) -> None:
         self.statusBar().showMessage(texto, 8000)

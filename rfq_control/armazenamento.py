@@ -3,6 +3,7 @@
     dados/
     ├── configuracoes.json
     ├── fornecedores.json      (antiga aba CadastroContatos)
+    ├── commodities.json       (commodities e o Commodity Buyer de cada uma)
     ├── projetos.json          (antiga aba CadastroProjetos)
     ├── solicitantes.json
     ├── feriados.json          (antiga aba Feriados)
@@ -23,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from collections.abc import Iterable
@@ -34,6 +36,7 @@ from pydantic import BaseModel, ValidationError
 
 from .modelos import (
     RFQ,
+    Commodity,
     Configuracoes,
     Feriado,
     Fornecedor,
@@ -43,8 +46,9 @@ from .modelos import (
     Registro,
     Solicitante,
 )
-from .padroes import modelos_email_padrao
+from .padroes import CORPOS_PADRAO_ANTIGOS, modelos_email_padrao
 from .servicos.dias_uteis import feriados_nacionais_brasil
+from .servicos.formatos import normalizar_nome
 
 log = logging.getLogger(__name__)
 
@@ -193,6 +197,7 @@ class BaseDados:
     def __init__(self, pasta: Path):
         self.pasta = Path(pasta)
         self.fornecedores: Colecao[Fornecedor] = self._colecao("fornecedores", Fornecedor)
+        self.commodities: Colecao[Commodity] = self._colecao("commodities", Commodity)
         self.projetos: Colecao[Projeto] = self._colecao("projetos", Projeto)
         self.solicitantes: Colecao[Solicitante] = self._colecao("solicitantes", Solicitante)
         self.feriados: Colecao[Feriado] = self._colecao("feriados", Feriado)
@@ -209,6 +214,7 @@ class BaseDados:
     def colecoes(self) -> list[Colecao]:
         return [
             self.fornecedores,
+            self.commodities,
             self.projetos,
             self.solicitantes,
             self.feriados,
@@ -252,6 +258,8 @@ class BaseDados:
         if base.primeira_execucao:
             base._criar_conteudo_inicial()
         base._completar_modelos_email()
+        base._completar_feriados()
+        base._migrar_categorias()
         return base
 
     def carregar(self) -> None:
@@ -270,24 +278,65 @@ class BaseDados:
         self.salvar_configuracoes(self.configuracoes)
         if not len(self.modelos_email):
             self.modelos_email.salvar_varios(modelos_email_padrao())
-        if not len(self.feriados):
-            ano = date.today().year
-            feriados = [
-                Feriado(data=dia, descricao=nome)
-                for a in (ano, ano + 1)
-                for dia, nome in feriados_nacionais_brasil(a)
-            ]
-            self.feriados.salvar_varios(feriados)
         for colecao in self.colecoes:
             if not colecao.caminho.exists():
                 colecao.gravar()
 
     def _completar_modelos_email(self) -> None:
-        """Acrescenta os modelos padrão que faltarem (ex.: espanhol em bases da versão anterior)."""
+        """Acrescenta os modelos padrão que faltarem e atualiza os que ainda têm o texto padrão antigo.
+
+        Modelos editados pelo usuário nunca são alterados.
+        """
+        padroes = {(m.tipo, m.idioma): m for m in modelos_email_padrao()}
         existentes = {(m.tipo, m.idioma) for m in self.modelos_email}
-        faltando = [m for m in modelos_email_padrao() if (m.tipo, m.idioma) not in existentes]
-        if faltando:
-            self.modelos_email.salvar_varios(faltando)
+        alterados = [m for m in padroes.values() if (m.tipo, m.idioma) not in existentes]
+        for modelo in self.modelos_email:
+            antigo = CORPOS_PADRAO_ANTIGOS.get((modelo.tipo, modelo.idioma))
+            novo = padroes.get((modelo.tipo, modelo.idioma))
+            if antigo and novo and modelo.corpo.strip() == antigo.strip():
+                alterados.append(modelo.model_copy(update={"corpo": novo.corpo}))
+        if alterados:
+            self.modelos_email.salvar_varios(alterados)
+
+    def _completar_feriados(self, hoje: date | None = None) -> None:
+        """Gera os feriados nacionais do ano atual e do próximo, se o ano ainda não tiver nenhum.
+
+        Evita que os prazos de um ano novo ignorem os feriados (bug B08 da planilha antiga).
+        """
+        ano = (hoje or date.today()).year
+        anos_com_feriado = {f.data.year for f in self.feriados}
+        novos = [
+            Feriado(data=dia, descricao=nome)
+            for a in (ano, ano + 1) if a not in anos_com_feriado
+            for dia, nome in feriados_nacionais_brasil(a)
+        ]
+        if novos:
+            self.feriados.salvar_varios(novos)
+
+    def _migrar_categorias(self) -> None:
+        """Bases até a versão 0.2: a 'Categoria' (texto) do fornecedor vira cadastro de commodities."""
+        pendentes = [f for f in self.fornecedores if f.categoria.strip()]
+        if not pendentes:
+            return
+        por_nome = {normalizar_nome(c.nome): c for c in self.commodities}
+        novas: dict[str, Commodity] = {}
+        fornecedores = []
+        for fornecedor in pendentes:
+            ids = list(fornecedor.commodity_ids)
+            for nome in re.split(r"[;,/]", fornecedor.categoria):
+                chave = normalizar_nome(nome)
+                if not chave:
+                    continue
+                commodity = por_nome.get(chave)
+                if commodity is None:
+                    commodity = por_nome[chave] = novas[chave] = Commodity(nome=nome.strip())
+                if commodity.id not in ids:
+                    ids.append(commodity.id)
+            fornecedores.append(fornecedor.model_copy(update={"commodity_ids": ids, "categoria": ""}))
+        if novas:
+            self.commodities.salvar_varios(novas.values())
+        self.fornecedores.salvar_varios(fornecedores)
+        log.info("Categorias de %d fornecedor(es) migradas para commodities.", len(fornecedores))
 
     def salvar_configuracoes(self, configuracoes: Configuracoes) -> Configuracoes:
         try:
@@ -334,11 +383,29 @@ class BaseDados:
     def rfqs_do_fornecedor(self, fornecedor_id: str) -> list[RFQ]:
         return [r for r in self.rfqs if r.fornecedor_id == fornecedor_id]
 
+    def rfqs_do_projeto(self, projeto_id: str) -> list[RFQ]:
+        pacotes = {p.id for p in self.pacotes_do_projeto(projeto_id)}
+        return sorted((r for r in self.rfqs if r.pacote_id in pacotes), key=lambda r: r.numero)
+
+    def commodities_do_fornecedor(self, fornecedor: Fornecedor) -> list[Commodity]:
+        return [c for c in (self.commodities.obter(i) for i in fornecedor.commodity_ids) if c]
+
+    def nomes_commodities(self, ids: list[str] | str | None) -> str:
+        if isinstance(ids, str):
+            ids = [ids]
+        return ", ".join(c.nome for c in (self.commodities.obter(i) for i in ids or []) if c)
+
+    def fornecedores_da_commodity(self, commodity_id: str) -> list[Fornecedor]:
+        return [f for f in self.fornecedores if commodity_id in f.commodity_ids]
+
     def pacotes_do_projeto(self, projeto_id: str) -> list[Pacote]:
         return [p for p in self.pacotes if p.projeto_id == projeto_id]
 
     def pacotes_do_solicitante(self, solicitante_id: str) -> list[Pacote]:
         return [p for p in self.pacotes if p.solicitante_id == solicitante_id]
+
+    def pacotes_da_commodity(self, commodity_id: str) -> list[Pacote]:
+        return [p for p in self.pacotes if p.commodity_id == commodity_id]
 
     def projeto_do_pacote(self, pacote: Pacote | None) -> Projeto | None:
         return self.projetos.obter(pacote.projeto_id) if pacote else None

@@ -7,9 +7,12 @@ macros — sem travar, com tudo registrado e com mais recursos.
 ## O que ele faz
 
 - **Base de dados com as antigas abas da planilha** (botão *Base de dados* no menu lateral): Controle,
-  Cadastro de Fornecedores, Cadastro de Projetos, Solicitantes, Feriados e Corpo do E-mail — abas embaixo,
-  como no Excel. Edite direto nas células (cada linha é salva sozinha), cole várias linhas do Excel com
-  Ctrl+V, copie com Ctrl+C.
+  Fornecedores, Commodities, Projetos, Solicitantes, Feriados e Corpo do E-mail — abas em cima, logo abaixo
+  da descrição. Edite direto nas células (cada linha é salva sozinha; a linha atual fica destacada e a célula
+  em edição ganha moldura azul), cole várias linhas do Excel com Ctrl+V, copie com Ctrl+C.
+- **Commodities:** cada commodity tem o seu **Commodity Buyer** (nome e e-mail). Um fornecedor pode ter
+  várias commodities. Nos e-mails, o buyer da commodity do pacote (ou das commodities do fornecedor) vai em
+  cópia, junto com os **E-mails Supplier (Cc)** do fornecedor.
 - **Idioma por fornecedor:** coluna *Idioma* no cadastro de fornecedores — **Português, Espanhol ou Inglês**.
   O e-mail de cada fornecedor sai no idioma dele (texto, datas e tabela).
 - **Cadastro em massa:** em cada aba, *Importar Excel/CSV* cria ou atualiza os registros a partir de uma
@@ -17,13 +20,22 @@ macros — sem travar, com tudo registrado e com mais recursos.
   formato certo, com a lista de idiomas. Na aba Controle, a importação aceita a planilha antiga e o modelo
   de RFQs — linhas **sem número de RFQ viram RFQs novas**, numeradas automaticamente.
 - **Enviar e-mails** (botão no menu lateral): escolha a RFQ, marque os fornecedores que vão receber e envie —
-  cada um recebe o e-mail padrão no seu idioma, com itens, dados do projeto, prazo e anexos. Quem ainda não
-  tem RFQ naquele pacote ganha um número novo na hora. Dá para **abrir no Outlook para revisar** (como a
-  macro) ou **enviar automaticamente pelo Outlook**.
-- **Nova solicitação em um passo:** escolha o projeto, cole os itens do Excel, anexe CDC/desenhos, marque os
-  fornecedores → uma RFQ por fornecedor (`RFQ2026001`, `RFQ2026002`…) e a tela de envio já aberta.
-- **Acompanhamento:** situação de cada RFQ (Rascunho, Enviada, **Atrasada**, Respondida, Declinada,
-  Selecionada…), prazo gravado, valor cotado, lead time, histórico completo e e-mail de cobrança.
+  cada um recebe o e-mail padrão no seu idioma, com tabela de itens (com volume anual), quadro do projeto,
+  prazo em destaque e anexos. Quem ainda não tem RFQ naquele pacote ganha um número novo na hora. Dá para
+  **abrir no Outlook para revisar** (como a macro) ou **enviar automaticamente pelo Outlook**.
+- **Envio confirmado de verdade:** e-mail aberto para revisão deixa a RFQ em **Aguardando envio**; ela só
+  passa a **Enviada** quando o e-mail aparece nos **Itens Enviados** do Outlook (o app confere ao abrir e ao
+  voltar para ele) ou com *Confirmar envio*. Se o rascunho for apagado sem enviar, nada é registrado.
+- **Nova solicitação em um passo:** escolha o projeto e a commodity, cole os itens do Excel, anexe
+  CDC/desenhos, marque os fornecedores (filtros por commodity, idioma e só marcados) → uma RFQ por fornecedor
+  (`RFQ2026001`, `RFQ2026002`…) e a tela de envio já aberta.
+- **Acompanhamento:** situação de cada RFQ (Rascunho, Aguardando envio, Enviada, **Atrasada**, Respondida,
+  Declinada, Selecionada…), prazo gravado, valor cotado, lead time e histórico completo.
+- **Cobrança na mesma conversa:** a cobrança **responde ao e-mail da RFQ** nos Itens Enviados do Outlook
+  (sem o original, sai um "RE:" com a solicitação original citada).
+- **Agradecimento / status do projeto:** escolha o projeto (ex.: declinado), todas as RFQs enviadas já vêm
+  marcadas e cada fornecedor recebe um e-mail no seu idioma agradecendo e informando a situação — com opção
+  de mudar o status das RFQs (ex.: Cancelada).
 - **Painel:** RFQs em aberto, atrasadas, vencendo, taxa e tempo médio de resposta, RFQs por mês e
   desempenho por fornecedor.
 - **Importação da planilha antiga** (menos de 1 segundo) e **exportação para Excel**.
@@ -35,7 +47,7 @@ RFQ_Control\
 ├── RFQ_Control.exe        ← abra este
 ├── programa\              ← bibliotecas (não mexa)
 └── dados\                 ← base de dados: um arquivo por "aba"
-    ├── fornecedores.json  projetos.json  solicitantes.json  feriados.json
+    ├── fornecedores.json  commodities.json  projetos.json  solicitantes.json  feriados.json
     ├── modelos_email.json pacotes.json   rfqs.json          configuracoes.json
     └── anexos\  emails\  backup\  logs\
 ```
@@ -56,10 +68,11 @@ executável no Windows. Em **Actions → Testes e executável → (última execu
 ## Primeiros passos
 
 1. Na primeira abertura, informe o nome da empresa (usado nos e-mails) e, se quiser, importe a planilha antiga.
-2. Em **Base de dados → Cadastro de Fornecedores**, complete os e-mails (Para e Cc) e o **Idioma** de cada
-   fornecedor — direto na tabela ou importando uma planilha (*Baixar modelo* mostra o formato).
-3. Em **Configurações**, confira o método de e-mail (Outlook ou `.eml`), os e-mails sempre em cópia e o prazo padrão.
-4. Crie RFQs em **+ Nova solicitação** (Ctrl+N) e dispare em **Enviar e-mails**.
+2. Em **Base de dados → Commodities**, cadastre as commodities e o Commodity Buyer de cada uma.
+3. Em **Base de dados → Fornecedores**, complete os e-mails (Para e Supplier Cc), as **commodities** e o
+   **Idioma** de cada fornecedor — direto na tabela ou importando uma planilha (*Baixar modelo* mostra o formato).
+4. Em **Configurações**, confira o método de e-mail (Outlook ou `.eml`), os e-mails sempre em cópia e o prazo padrão.
+5. Crie RFQs em **+ Nova solicitação** (Ctrl+N) e dispare em **Enviar e-mails**.
 
 Atalhos: `Ctrl+N` nova solicitação · `Ctrl+B` Base de dados · na lista de RFQs: `Ctrl+R` enviar e-mails
 (escolher fornecedores) e `Ctrl+E` gerar o e-mail das RFQs selecionadas · `Ctrl+F` buscar · `Enter` abrir ·

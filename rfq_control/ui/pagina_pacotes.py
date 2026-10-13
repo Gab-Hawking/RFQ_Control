@@ -51,6 +51,8 @@ class PaginaPacotes(QWidget):
         barra.addWidget(botao("Enviar e-mails…", self._enviar,
                               dica="Escolher os fornecedores que vão receber esta RFQ"))
         barra.addWidget(botao("Duplicar", self._duplicar, dica="Cria um novo pacote com os mesmos itens e anexos"))
+        barra.addWidget(botao("Agradecimento / status…", self._agradecimento,
+                              dica="E-mail de agradecimento / situação do projeto para os fornecedores"))
         barra.addWidget(botao("Excluir", self._excluir, perigo=True))
         layout.addLayout(barra)
 
@@ -59,6 +61,7 @@ class PaginaPacotes(QWidget):
             Coluna("Pacote", lambda p: p.titulo, largura=280),
             Coluna("Projeto", lambda p: self._projeto(p)[0], largura=170),
             Coluna("Cliente", lambda p: self._projeto(p)[1], largura=110),
+            Coluna("Commodity", lambda p: self.base.nomes_commodities(p.commodity_id), largura=130),
             Coluna("Data", lambda p: p.data, largura=95),
             Coluna("Itens", lambda p: len(p.itens), largura=65, alinhamento=Qt.AlignmentFlag.AlignRight),
             Coluna("RFQs", lambda p: self._contagem(p)[0], largura=65, alinhamento=Qt.AlignmentFlag.AlignRight),
@@ -68,7 +71,7 @@ class PaginaPacotes(QWidget):
             Coluna("Solicitante", self._solicitante, esticar=True),
         ], selecao_multipla=False)
         self.tabela.ativada.connect(lambda p: self._abrir(p))
-        self.tabela.sortByColumn(3, Qt.SortOrder.DescendingOrder)
+        self.tabela.sortByColumn(4, Qt.SortOrder.DescendingOrder)
         self.tabela.selectionModel().selectionChanged.connect(lambda *_: self._mostrar_rfqs())
         self.busca.textChanged.connect(self.tabela.filtro.definir_busca)
         divisor.addWidget(self.tabela)
@@ -171,6 +174,11 @@ class PaginaPacotes(QWidget):
             self.janela.mensagem(f"Pacote duplicado: {copia.titulo}")
             self.atualizar()
             self._abrir(copia, "fornecedores")
+
+    def _agradecimento(self) -> None:
+        pacote = self.tabela.atual()
+        if acoes.agradecimento(self.janela, pacote.projeto_id if pacote else None):
+            self.atualizar()
 
     def _excluir(self) -> None:
         pacote = self.tabela.atual()

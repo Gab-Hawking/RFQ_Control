@@ -1,6 +1,6 @@
 """Base de dados: as antigas abas da planilha, editáveis como planilha.
 
-Abas (embaixo, como no Excel): Controle · Cadastro de Fornecedores · Cadastro de Projetos ·
+Abas (em cima, logo abaixo da descrição): Controle · Fornecedores · Commodities · Projetos ·
 Solicitantes · Feriados · Corpo do E-mail.
 """
 
@@ -166,7 +166,8 @@ class AbaCadastro(QWidget):
     def baixar_modelo(self) -> None:
         destino = _salvar_como(self, "Salvar modelo", f"Modelo - {self.definicao.titulo}.xlsx")
         if destino:
-            ok, arquivo = executar(self, lambda: servico_abas.gerar_modelo(self.definicao, destino))
+            ok, arquivo = executar(
+                self, lambda: servico_abas.gerar_modelo(self.definicao, destino, self.janela.base))
             if ok:
                 _oferecer_abrir(self.janela, arquivo, "Modelo gerado")
 
@@ -336,8 +337,10 @@ class PaginaBaseDados(QWidget):
         self.controle = AbaControle(janela)
         self.fornecedores = AbaCadastro(
             janela, servico_abas.ABA_FORNECEDORES,
-            [botao("Contatos detalhados…", self._contatos, dica="Vários contatos, nomes e telefones")],
+            [botao("Detalhes do fornecedor…", self._contatos,
+                   dica="Nome dos contatos (usado na saudação do e-mail), fornecedor ativo e observações")],
         )
+        self.commodities = AbaCadastro(janela, servico_abas.ABA_COMMODITIES)
         self.projetos = AbaCadastro(janela, servico_abas.ABA_PROJETOS)
         self.solicitantes = AbaCadastro(janela, servico_abas.ABA_SOLICITANTES)
         self.feriados = AbaCadastro(
@@ -348,12 +351,12 @@ class PaginaBaseDados(QWidget):
 
         self.abas = QTabWidget()
         self.abas.setObjectName("abasPlanilha")
-        self.abas.setTabPosition(QTabWidget.TabPosition.South)
-        self.abas.setDocumentMode(True)
+        self.abas.setTabPosition(QTabWidget.TabPosition.North)
         for widget, titulo in (
             (self.controle, "Controle"),
-            (self.fornecedores, "Cadastro de Fornecedores"),
-            (self.projetos, "Cadastro de Projetos"),
+            (self.fornecedores, "Fornecedores"),
+            (self.commodities, "Commodities"),
+            (self.projetos, "Projetos"),
             (self.solicitantes, "Solicitantes"),
             (self.feriados, "Feriados"),
             (self.modelos, "Corpo do E-mail"),
@@ -364,10 +367,11 @@ class PaginaBaseDados(QWidget):
 
     @property
     def abas_cadastro(self) -> list[AbaCadastro]:
-        return [self.fornecedores, self.projetos, self.solicitantes, self.feriados]
+        return [self.fornecedores, self.commodities, self.projetos, self.solicitantes, self.feriados]
 
     def mostrar(self, chave: str) -> None:
-        mapa = {"controle": self.controle, "fornecedores": self.fornecedores, "projetos": self.projetos,
+        mapa = {"controle": self.controle, "fornecedores": self.fornecedores, "commodities": self.commodities,
+                "projetos": self.projetos,
                 "solicitantes": self.solicitantes, "feriados": self.feriados, "modelos": self.modelos}
         self.abas.setCurrentWidget(mapa[chave])
         self.atualizar()

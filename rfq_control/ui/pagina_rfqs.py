@@ -10,12 +10,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from ..modelos import RFQ, SITUACAO_ATRASADA, Idioma, StatusRFQ, TipoModelo
+from ..modelos import RFQ, SITUACAO_AGUARDANDO, SITUACAO_ATRASADA, Idioma, StatusRFQ, TipoModelo
 from ..servicos.dias_uteis import dias_uteis_entre
 from ..servicos.exportacao import exportar_rfqs
 from ..servicos.envio_email import abrir_arquivo
 from ..servicos.formatos import numero_br
-from ..servicos.rfq import excluir_rfq
+from ..servicos.rfq import excluir_pacote, excluir_rfq, pacotes_sem_rfq
 from . import acoes
 from .componentes import (
     CaixaBusca,
@@ -55,7 +55,8 @@ class PaginaRFQs(QWidget):
         filtros = QHBoxLayout()
         self.busca = CaixaBusca("Buscar número, fornecedor, projeto, cliente…")
         self.situacao = QComboBox()
-        self.situacao.addItems([FILTRO_TODAS, FILTRO_ABERTAS, SITUACAO_ATRASADA] + [s.value for s in StatusRFQ])
+        self.situacao.addItems(
+            [FILTRO_TODAS, FILTRO_ABERTAS, SITUACAO_ATRASADA, SITUACAO_AGUARDANDO] + [s.value for s in StatusRFQ])
         self.projeto = QComboBox()
         self.fornecedor = QComboBox()
         self.ano = QComboBox()
@@ -77,7 +78,10 @@ class PaginaRFQs(QWidget):
         botoes.addWidget(botao("Gerar e-mail", lambda: self._emails(None),
                                dica="E-mail das RFQs selecionadas, no idioma de cada fornecedor (Ctrl+E)"))
         botoes.addWidget(botao("Cobrança", lambda: self._emails(None, TipoModelo.COBRANCA),
-                               dica="E-mail lembrando o prazo às RFQs selecionadas"))
+                               dica="Responde ao e-mail da RFQ (mesma conversa) lembrando o prazo"))
+        botoes.addWidget(botao("Agradecimento / status…", self._agradecimento,
+                               dica="E-mail de agradecimento / situação do projeto (ex.: projeto declinado) para "
+                                    "todos os fornecedores das RFQs de um projeto"))
         botoes.addWidget(botao("Alterar status", self._status))
         botoes.addStretch()
         botoes.addWidget(botao("Excluir rascunho", self._excluir, perigo=True))
@@ -246,7 +250,25 @@ class PaginaRFQs(QWidget):
             ok, _ = executar(self, lambda r=rfq: excluir_rfq(self.base, r.id))
             if not ok:
                 break
+        vazios = pacotes_sem_rfq(self.base, [r.pacote_id for r in selecionadas])
+        if vazios and confirmar(
+            self,
+            "Estes pacotes ficaram sem nenhuma RFQ:\n• " + "\n• ".join(p.titulo for p in vazios)
+            + "\n\nExcluir também os pacotes (itens e anexos)? Assim eles não aparecem mais em 'Enviar e-mails'.",
+            "Pacotes sem RFQ", "Excluir pacotes",
+        ):
+            for pacote in vazios:
+                executar(self, lambda p=pacote: excluir_pacote(self.base, p.id))
         self.atualizar(recarregar_filtros=False)
+
+    def _agradecimento(self) -> None:
+        atual = self.tabela.atual()
+        projeto_id = self.projeto.currentData()
+        if not projeto_id and atual:
+            pacote = self._pacote_de(atual)
+            projeto_id = pacote.projeto_id if pacote else None
+        if acoes.agradecimento(self.janela, projeto_id):
+            self.atualizar(recarregar_filtros=False)
 
     def _exportar(self) -> None:
         sugestao = str(Path.home() / f"RFQs_{date.today():%Y-%m-%d}.xlsx")

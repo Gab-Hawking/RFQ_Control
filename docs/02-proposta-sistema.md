@@ -270,6 +270,7 @@ RFQ_Control\
 └── dados\
     ├── configuracoes.json
     ├── fornecedores.json   (antiga aba CadastroContatos)
+    ├── commodities.json    (commodities e Commodity Buyer)
     ├── projetos.json       (antiga aba CadastroProjetos)
     ├── solicitantes.json
     ├── feriados.json       (antiga aba Feriados)
@@ -302,6 +303,7 @@ gravações são atômicas (arquivo temporário + substituição), então o arqu
 | **1 — Paridade** | Cadastros, lista de RFQs, pacote → N RFQs, e-mail PT/EN (Outlook/.eml), feriados, exportação Excel | ✅ v0.1.0 |
 | **2 — Acompanhamento** | Status, resposta (valor, moeda, lead time), atrasos automáticos, cobrança, painel | ✅ v0.1.0 (resposta no nível da RFQ) |
 | **2.5 — Base de dados e envio** | Tela com as antigas abas (edição tipo planilha), idioma Espanhol, cadastro em massa por Excel/CSV, RFQs novas a partir de planilha, envio de e-mails escolhendo RFQ e fornecedores (revisão ou envio automático) | ✅ v0.2.0 |
+| **2.6 — Commodities e comunicação** | Commodities com Commodity Buyer em cópia, cadastro de fornecedores simplificado (Para, Supplier Cc, commodities, idioma), envio confirmado pelos Itens Enviados do Outlook ("Aguardando envio"), cobrança como resposta ao e-mail da RFQ, e-mail de agradecimento / status do projeto, e-mail com tabelas redesenhadas, novo tema visual | ✅ v0.3.0 |
 | **3 — Análise** | Cotação por item (N02), comparativo lado a lado (N03), scorecard detalhado, volumes por ano (N11) | Próxima |
 | **4 — Integrações** | Leitura automática de respostas no Outlook (N13), lembretes automáticos | Futuro |
 

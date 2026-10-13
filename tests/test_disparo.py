@@ -53,7 +53,9 @@ def test_disparo_cria_rfq_para_novos_e_pula_quem_nao_tem_email(base_populada, pa
 
     rfqs = {r.fornecedor_id: r for r in base_populada.rfqs}
     assert set(rfqs) == {"f1", "f2"}  # nenhuma RFQ para quem não tem e-mail
-    assert all(r.status == StatusRFQ.ENVIADA and r.prazo == date(2026, 10, 6) for r in rfqs.values())
+    # aberto para revisão: aguarda o envio no Outlook (o prazo do e-mail fica guardado)
+    assert all(r.status == StatusRFQ.RASCUNHO and r.aguardando_envio() for r in rfqs.values())
+    assert all(r.situacao() == "Aguardando envio" and r.prazo == date(2026, 10, 6) for r in rfqs.values())
     assert rfqs["f2"].idioma == Idioma.ES
 
 

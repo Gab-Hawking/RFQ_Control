@@ -35,7 +35,7 @@ Estrutura:
   RFQ_Control.exe   programa (abra este arquivo)
   programa\\         bibliotecas do programa — não mexa
   dados\\            base de dados: um arquivo .json para cada cadastro
-                    (fornecedores, projetos, solicitantes, feriados,
+                    (fornecedores, commodities, projetos, solicitantes, feriados,
                     modelos de e-mail, pacotes e RFQs), anexos, e-mails
                     gerados, cópias de segurança e registros de erro
 

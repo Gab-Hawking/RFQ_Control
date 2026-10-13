@@ -25,7 +25,22 @@ from PySide6.QtWidgets import (
 from ..modelos import Idioma, MetodoEmail, StatusRFQ, TipoModelo
 from ..servicos.disparo import Destinatario, ResultadoDisparo, disparar, situacao_fornecedores
 from . import estilo
-from .componentes import CaixaBusca, Coluna, Tabela, avisar, botao, confirmar, executar, mostrar_resultado, sem_acentos
+from .componentes import (
+    CaixaBusca,
+    Coluna,
+    DelegadoBase,
+    Tabela,
+    avisar,
+    botao,
+    confirmar,
+    executar,
+    mostrar_resultado,
+    sem_acentos,
+)
+
+SEM_COMMODITY = "__sem__"
+# colunas da tabela de fornecedores
+COL_ENVIAR, COL_FORNECEDOR, COL_COMMODITY, COL_IDIOMA, COL_EMAIL, COL_PACOTE = range(6)
 
 if TYPE_CHECKING:
     from .janela_principal import JanelaPrincipal
@@ -57,8 +72,9 @@ class DialogoEnvio(QDialog):
         layout.addWidget(titulo)
         explicacao = QLabel(
             "Escolha a RFQ, marque os fornecedores e envie: cada um recebe o e-mail padrão no seu idioma, "
-            "com a tabela de itens, os dados do projeto, o prazo e os anexos. Quem ainda não tem RFQ neste "
-            "pacote recebe um número novo automaticamente."
+            "com a tabela de itens, os dados do projeto, o prazo e os anexos (Commodity Buyer em cópia). Quem "
+            "ainda não tem RFQ neste pacote recebe um número novo automaticamente. E-mails abertos para revisão "
+            "só contam como enviados quando aparecem nos Itens Enviados do Outlook."
         )
         explicacao.setObjectName("subtitulo")
         explicacao.setWordWrap(True)
@@ -76,12 +92,13 @@ class DialogoEnvio(QDialog):
         self.busca_pacote = CaixaBusca("Buscar RFQ, projeto, cliente…")
         esquerda_layout.addWidget(self.busca_pacote)
         self.pacotes = Tabela([
-            Coluna("RFQ / pacote", lambda p: p.titulo, largura=250, dica=lambda p: p.titulo),
-            Coluna("Números", self._numeros, largura=165, dica=self._todos_numeros),
-            Coluna("Itens", lambda p: len(p.itens), largura=55, alinhamento=Qt.AlignmentFlag.AlignRight),
+            Coluna("RFQ / pacote", lambda p: p.titulo, largura=210, dica=lambda p: p.titulo),
+            Coluna("Números", self._numeros, largura=160, dica=self._todos_numeros),
+            Coluna("Commodity", lambda p: self.base.nomes_commodities(p.commodity_id), largura=120),
+            Coluna("Itens", lambda p: len(p.itens), largura=50, alinhamento=Qt.AlignmentFlag.AlignRight),
             Coluna("Data", lambda p: p.data, esticar=True),
         ], selecao_multipla=False)
-        self.pacotes.sortByColumn(3, Qt.SortOrder.DescendingOrder)
+        self.pacotes.sortByColumn(4, Qt.SortOrder.DescendingOrder)
         self.busca_pacote.textChanged.connect(self.pacotes.filtro.definir_busca)
         self.pacotes.selectionModel().selectionChanged.connect(lambda *_: self._carregar_fornecedores())
         esquerda_layout.addWidget(self.pacotes, 1)
@@ -95,21 +112,32 @@ class DialogoEnvio(QDialog):
         passo2.setObjectName("tituloSecao")
         direita_layout.addWidget(passo2)
         linha_busca = QHBoxLayout()
-        self.busca_fornecedor = CaixaBusca("Buscar fornecedor, e-mail, categoria…")
-        self.busca_fornecedor.textChanged.connect(self._filtrar_fornecedores)
+        self.busca_fornecedor = CaixaBusca("Buscar fornecedor, e-mail, commodity…")
+        self.busca_fornecedor.textChanged.connect(lambda _t: self._filtrar_fornecedores())
+        self.filtro_commodity = QComboBox()
+        self.filtro_commodity.addItem("Todas as commodities", None)
+        for commodity in sorted(self.base.commodities, key=lambda c: c.nome.casefold()):
+            self.filtro_commodity.addItem(commodity.nome, commodity.id)
+        self.filtro_commodity.addItem("Sem commodity", SEM_COMMODITY)
+        self.filtro_commodity.currentIndexChanged.connect(lambda _i: self._filtrar_fornecedores())
         linha_busca.addWidget(self.busca_fornecedor, 1)
+        linha_busca.addWidget(self.filtro_commodity)
         linha_busca.addWidget(botao("Marcar visíveis", lambda: self._marcar_todos(True)))
         linha_busca.addWidget(botao("Desmarcar", lambda: self._marcar_todos(False)))
         direita_layout.addLayout(linha_busca)
-        self.fornecedores = QTableWidget(0, 5)
-        self.fornecedores.setHorizontalHeaderLabels(["Enviar", "Fornecedor", "Idioma", "E-mail (Para)", "Neste pacote"])
+        self.fornecedores = QTableWidget(0, 6)
+        self.fornecedores.setHorizontalHeaderLabels(
+            ["Enviar", "Fornecedor", "Commodity", "Idioma", "E-mail (Para)", "Neste pacote"])
         self.fornecedores.verticalHeader().setVisible(False)
+        self.fornecedores.verticalHeader().setDefaultSectionSize(34)
+        self.fornecedores.setItemDelegate(DelegadoBase(self.fornecedores))
         self.fornecedores.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.fornecedores.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         cabecalho = self.fornecedores.horizontalHeader()
-        for coluna, largura in ((0, 60), (1, 170), (2, 115), (3, 205)):
+        for coluna, largura in ((COL_ENVIAR, 60), (COL_FORNECEDOR, 165), (COL_COMMODITY, 130), (COL_IDIOMA, 115),
+                                (COL_EMAIL, 195)):
             self.fornecedores.setColumnWidth(coluna, largura)
-        cabecalho.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        cabecalho.setSectionResizeMode(COL_PACOTE, QHeaderView.ResizeMode.Stretch)
         self.fornecedores.itemChanged.connect(lambda _: self._atualizar_botao())
         direita_layout.addWidget(self.fornecedores, 1)
         divisor.addWidget(direita)
@@ -191,7 +219,7 @@ class DialogoEnvio(QDialog):
                 self._adicionar_fornecedor(situacao)
         self.fornecedores.blockSignals(False)
         self._marcar_inicial = set()
-        self._filtrar_fornecedores(self.busca_fornecedor.text())
+        self._filtrar_fornecedores()
         self._atualizar_botao()
 
     def _adicionar_fornecedor(self, situacao) -> None:
@@ -211,36 +239,43 @@ class DialogoEnvio(QDialog):
         else:
             caixa.setFlags(Qt.ItemFlag.NoItemFlags)
             caixa.setToolTip("Sem e-mail (Para) cadastrado — complete na Base de dados.")
-        self.fornecedores.setItem(linha, 0, caixa)
-        nome = QTableWidgetItem(fornecedor.nome)
-        if fornecedor.categoria:
-            nome.setToolTip(fornecedor.categoria)
-        self.fornecedores.setItem(linha, 1, nome)
+        caixa.setData(Qt.ItemDataRole.UserRole + 1, list(fornecedor.commodity_ids))
+        self.fornecedores.setItem(linha, COL_ENVIAR, caixa)
+        self.fornecedores.setItem(linha, COL_FORNECEDOR, QTableWidgetItem(fornecedor.nome))
+        commodities = self.base.nomes_commodities(fornecedor.commodity_ids)
+        celula_commodity = QTableWidgetItem(commodities or "—")
+        celula_commodity.setToolTip(commodities)
+        self.fornecedores.setItem(linha, COL_COMMODITY, celula_commodity)
         idioma = QComboBox()
         for opcao in Idioma:
             idioma.addItem(opcao.rotulo, opcao)
         idioma.setCurrentIndex(idioma.findData(situacao.idioma))
         idioma.setToolTip("Idioma do e-mail para este fornecedor")
-        self.fornecedores.setCellWidget(linha, 2, idioma)
+        self.fornecedores.setCellWidget(linha, COL_IDIOMA, idioma)
         emails = "; ".join(fornecedor.emails_para()) or "⚠ sem e-mail cadastrado"
-        self.fornecedores.setItem(linha, 3, QTableWidgetItem(emails))
+        self.fornecedores.setItem(linha, COL_EMAIL, QTableWidgetItem(emails))
         estado = QTableWidgetItem(situacao.descricao)
         estado.setToolTip(situacao.descricao)
         if situacao.rfq is None:
             estado.setForeground(QColor(estilo.TINTA_SUAVE))
-        self.fornecedores.setItem(linha, 4, estado)
+        self.fornecedores.setItem(linha, COL_PACOTE, estado)
         if not situacao.tem_email:
-            for coluna in (1, 3, 4):
+            for coluna in (COL_FORNECEDOR, COL_COMMODITY, COL_EMAIL, COL_PACOTE):
                 self.fornecedores.item(linha, coluna).setForeground(QColor(estilo.TINTA_SUAVE))
 
-    def _filtrar_fornecedores(self, texto: str) -> None:
-        termos = sem_acentos(texto).split()
+    def _filtrar_fornecedores(self) -> None:
+        termos = sem_acentos(self.busca_fornecedor.text()).split()
+        commodity = self.filtro_commodity.currentData()
         for linha in range(self.fornecedores.rowCount()):
             alvo = sem_acentos(" ".join(
                 (self.fornecedores.item(linha, c).text() if self.fornecedores.item(linha, c) else "")
-                for c in (1, 3, 4)
-            ) + " " + (self.fornecedores.item(linha, 1).toolTip() or ""))
-            self.fornecedores.setRowHidden(linha, not all(t in alvo for t in termos))
+                for c in (COL_FORNECEDOR, COL_COMMODITY, COL_EMAIL, COL_PACOTE)
+            ))
+            ids = self.fornecedores.item(linha, COL_ENVIAR).data(Qt.ItemDataRole.UserRole + 1) or []
+            visivel = all(t in alvo for t in termos) and (
+                commodity is None or (commodity == SEM_COMMODITY and not ids) or commodity in ids
+            )
+            self.fornecedores.setRowHidden(linha, not visivel)
 
     def _marcar_todos(self, marcar: bool) -> None:
         self.fornecedores.blockSignals(True)
@@ -256,7 +291,7 @@ class DialogoEnvio(QDialog):
         for linha in range(self.fornecedores.rowCount()):
             item = self.fornecedores.item(linha, 0)
             if item.flags() & Qt.ItemFlag.ItemIsUserCheckable and item.checkState() == Qt.CheckState.Checked:
-                idioma = Idioma(self.fornecedores.cellWidget(linha, 2).currentData())
+                idioma = Idioma(self.fornecedores.cellWidget(linha, COL_IDIOMA).currentData())
                 lista.append(Destinatario(item.data(Qt.ItemDataRole.UserRole), idioma))
         return lista
 

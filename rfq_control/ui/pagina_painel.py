@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..modelos import SITUACAO_ATRASADA, Idioma, StatusRFQ
+from ..modelos import SITUACAO_AGUARDANDO, SITUACAO_ATRASADA, Idioma, StatusRFQ
 from ..servicos.dias_uteis import dias_uteis_entre
 from ..servicos.formatos import data_por_extenso
 from ..servicos.rfq import calcular_indicadores
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 ORDEM_SITUACOES = [
     SITUACAO_ATRASADA,
     StatusRFQ.ENVIADA.value,
+    SITUACAO_AGUARDANDO,
     StatusRFQ.RASCUNHO.value,
     StatusRFQ.RESPONDIDA.value,
     StatusRFQ.SELECIONADA.value,

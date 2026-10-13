@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..modelos import Idioma, Item, ModeloEmail, Projeto, TipoModelo
-from ..padroes import VARIAVEIS_MODELO, modelos_email_padrao
+from ..padroes import ASSUNTO_RFQ, MOTIVOS_AGRADECIMENTO, VARIAVEIS_MODELO, modelos_email_padrao
 from ..servicos.email_rfq import renderizar, tabela_itens, tabela_projeto
 from ..servicos.formatos import data_por_extenso
 from .componentes import botao, cabecalho_pagina, confirmar, executar
@@ -30,9 +30,10 @@ if TYPE_CHECKING:
     from .janela_principal import JanelaPrincipal
 
 
-def pre_visualizar_html(modelo: ModeloEmail, empresa: str, colunas_fornecedor: bool) -> str:
+def pre_visualizar_html(modelo: ModeloEmail, empresa: str) -> str:
     """Renderiza o modelo com dados de exemplo."""
     idioma = modelo.idioma
+    motivo = next((m for m in MOTIVOS_AGRADECIMENTO if m.textos), None)
     itens = [
         Item(ref_op="PEÇA EXEMPLO 1", ref_cdc="CDC-EXEMPLO-001", unidade="PC", quantidade=2),
         Item(ref_op="PEÇA EXEMPLO 2", ref_cdc="CDC-EXEMPLO-002", unidade="PC", quantidade=1, volume_anual=150000),
@@ -43,6 +44,9 @@ def pre_visualizar_html(modelo: ModeloEmail, empresa: str, colunas_fornecedor: b
         "fornecedor": "Fornecedor Exemplo Ltda.",
         "empresa": empresa or "nossa empresa",
         "rfq": f"RFQ{date.today().year}001",
+        "rfqs": f"RFQ{date.today().year}001, RFQ{date.today().year}004",
+        "commodity": "Ferramentaria",
+        "motivo": motivo.textos[idioma] if motivo else "",
         "projeto": projeto.nome,
         "cliente": projeto.cliente,
         "planta": projeto.planta,
@@ -51,11 +55,13 @@ def pre_visualizar_html(modelo: ModeloEmail, empresa: str, colunas_fornecedor: b
         "prazo": data_por_extenso(date.today(), idioma),
     }
     blocos = {
-        "tabela_itens": tabela_itens(itens, idioma, colunas_fornecedor),
+        "tabela_itens": tabela_itens(itens, idioma),
         "tabela_projeto": tabela_projeto(projeto, idioma),
     }
     corpo, _ = renderizar(modelo.corpo, variaveis, blocos)
     assunto, _ = renderizar(modelo.assunto, variaveis, {})
+    if modelo.tipo == TipoModelo.COBRANCA:
+        assunto = "RE: " + renderizar(ASSUNTO_RFQ, variaveis, {})[0] + " <i>(resposta ao e-mail da RFQ)</i>"
     return f"<p style='color:#52514e'><b>Assunto:</b> {assunto}</p><hr>{corpo}"
 
 
@@ -71,9 +77,10 @@ class PaginaModelos(QWidget):
 
         layout = QVBoxLayout(self)
         explicacao = (
-            "Textos padrão dos e-mails de RFQ e de cobrança, em português, espanhol e inglês — o idioma "
-            "usado é o do fornecedor. Separe parágrafos com uma linha em branco; use **texto** para negrito "
-            "e as variáveis da lista para os dados da RFQ."
+            "Textos padrão dos e-mails de RFQ, cobrança e agradecimento, em português, espanhol e inglês — o "
+            "idioma usado é o do fornecedor. Separe parágrafos com uma linha em branco; use **texto** para negrito "
+            "(um parágrafo inteiro em negrito vira um quadro de destaque) e as variáveis da lista para os dados. "
+            "A cobrança sai como resposta ao e-mail da RFQ, com o mesmo assunto."
         )
         if embutida:
             layout.setContentsMargins(12, 12, 12, 8)
@@ -139,9 +146,11 @@ class PaginaModelos(QWidget):
         atual_id = self.atual.id if self.atual else None
         self.lista.blockSignals(True)
         self.lista.clear()
+        ordem_tipos = list(TipoModelo)
+        ordem_idiomas = list(Idioma)
         modelos = sorted(
             self.base.modelos_email,
-            key=lambda m: (m.tipo != TipoModelo.RFQ, m.tipo.value, m.idioma != Idioma.PT),
+            key=lambda m: (ordem_tipos.index(m.tipo), ordem_idiomas.index(m.idioma)),
         )
         for modelo in modelos:
             item = QListWidgetItem(f"{modelo.tipo.value} — {modelo.idioma.rotulo}")
@@ -191,7 +200,7 @@ class PaginaModelos(QWidget):
         if modelo is None:
             return
         config = self.base.configuracoes
-        ok, html = executar(self, lambda: pre_visualizar_html(modelo, config.empresa, config.incluir_colunas_fornecedor))
+        ok, html = executar(self, lambda: pre_visualizar_html(modelo, config.empresa))
         if not ok:
             return
         dialogo = QDialog(self)

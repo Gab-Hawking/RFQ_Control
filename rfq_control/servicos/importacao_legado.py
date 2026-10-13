@@ -432,7 +432,7 @@ def importar_planilha(
     sem_email = [f.nome for f in cadastros.fornecedores.values() if not f.emails_para()]
     if sem_email:
         avisos.append(
-            f"{len(sem_email)} fornecedor(es) sem e-mail de destinatário — complete na Base de dados (Cadastro de Fornecedores) "
+            f"{len(sem_email)} fornecedor(es) sem e-mail de destinatário — complete na Base de dados (Fornecedores) "
             "antes de gerar os e-mails."
         )
     if relatorio.rfqs_importadas:

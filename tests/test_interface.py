@@ -57,9 +57,9 @@ def test_todas_as_paginas_abrem(janela, app, mensagens):
         base.abas.setCurrentIndex(indice)
         app.processEvents()
     assert [base.abas.tabText(i) for i in range(base.abas.count())] == [
-        "Controle", "Cadastro de Fornecedores", "Cadastro de Projetos", "Solicitantes", "Feriados",
-        "Corpo do E-mail",
+        "Controle", "Fornecedores", "Commodities", "Projetos", "Solicitantes", "Feriados", "Corpo do E-mail",
     ]
+    assert base.abas.tabPosition() == base.abas.TabPosition.North  # abas em cima, abaixo da descrição
     assert janela.ir_para("feriados") is base and base.abas.currentWidget() is base.feriados
     assert not [m for m in mensagens if m[0] == "critical"]
 
@@ -147,13 +147,16 @@ def test_gerar_email_pela_lista(janela, pacote_exemplo, monkeypatch, mensagens):
     _, rfqs = srv.criar_pacote_com_rfqs(base, pacote_exemplo, ["f1", "f2"])
     assert acoes.gerar_emails(janela, rfqs, Idioma.EN) == 2
     assert len(abertos) == 2 and all(p.suffix == ".eml" for p in abertos)
-    assert all(base.rfqs.obter(r.id).status == StatusRFQ.ENVIADA for r in rfqs)
+    # abertos para revisão: só viram Enviada quando o envio é confirmado
+    assert all(base.rfqs.obter(r.id).aguardando_envio() for r in rfqs)
 
     pagina = janela.ir_para("rfqs")
-    pagina.filtrar_situacao("Em aberto")
+    pagina.filtrar_situacao("Aguardando envio")
     assert len(pagina.tabela.visiveis()) == 2
-    pagina.filtrar_situacao(StatusRFQ.RASCUNHO.value)
-    assert pagina.tabela.visiveis() == []
+    srv.alterar_status(base, [rfqs[0].id], StatusRFQ.ENVIADA)
+    pagina.atualizar()
+    pagina.filtrar_situacao("Em aberto")
+    assert [r.id for r in pagina.tabela.visiveis()] == [rfqs[0].id]
 
 
 def test_email_de_fornecedor_sem_contato_avisa(janela, pacote_exemplo, mensagens):
@@ -183,8 +186,10 @@ def test_pre_visualizacao_do_modelo(base):
     from rfq_control.ui.pagina_modelos import pre_visualizar_html
 
     for modelo in base.modelos_email:
-        html = pre_visualizar_html(modelo, "Empresa Exemplo", True)
-        assert "{{" not in html and "<table" in html
+        html = pre_visualizar_html(modelo, "Empresa Exemplo")
+        assert "{{" not in html
+        if modelo.tipo.name == "RFQ":
+            assert "<table" in html
 
 
 # ---------------------------------------------------------------- Base de dados
@@ -286,5 +291,137 @@ def test_dialogo_de_envio(janela, pacote_exemplo, monkeypatch, mensagens):
     assert dialogo.resultado and len(dialogo.resultado.enviados) == 2
     assert [enviar for _e, enviar in usados] == [False, False]
     assert {r.fornecedor_id for r in janela.base.rfqs_do_pacote(pacote.id)} == {"f1", "f2"}
-    assert all(r.status == StatusRFQ.ENVIADA for r in janela.base.rfqs_do_pacote(pacote.id))
+    assert all(r.situacao() == "Aguardando envio" for r in janela.base.rfqs_do_pacote(pacote.id))
     assert usados[1][0].idioma == Idioma.EN  # idioma do fornecedor f2
+
+
+# ---------------------------------------------------------------- commodities, filtros, agradecimento
+
+
+@pytest.fixture
+def com_commodities(janela):
+    from rfq_control.modelos import Commodity
+    from rfq_control.servicos import cadastros
+
+    base = janela.base
+    base.commodities.salvar_varios([
+        Commodity(id="c1", nome="Ferramentaria", comprador="Bia", email="bia@op.com"),
+        Commodity(id="c2", nome="Dispositivos", comprador="Caio", email="caio@op.com"),
+    ])
+    cadastros.salvar_fornecedor(base, base.fornecedores.obter("f1").model_copy(update={"commodity_ids": ["c1"]}))
+    cadastros.salvar_fornecedor(base, base.fornecedores.obter("f2").model_copy(update={"commodity_ids": ["c2"]}))
+    return janela
+
+
+def test_grade_de_fornecedores_com_commodity(com_commodities, app):
+    from rfq_control.ui.grade import EditorMultiplo
+
+    pagina = com_commodities.ir_para("fornecedores")
+    grade = pagina.fornecedores.grade
+    titulos = [c.titulo for c in grade.definicao.colunas]
+    assert titulos == ["Fornecedor", "E-mail (Para)", "E-mails Supplier (Cc)", "Commodity",
+                       "E-mail Commodity Buyer (Cc)", "Idioma"]
+    linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "f3")
+    buyer = _indice(grade, linha, "email_buyer")
+    assert not grade.model().flags(buyer) & Qt.ItemFlag.ItemIsEditable  # coluna calculada
+
+    indice = _indice(grade, linha, "commodities")
+    grade.setCurrentIndex(indice)
+    grade.edit(indice)
+    app.processEvents()
+    editor = grade.indexWidget(indice) or next(
+        w for w in grade.viewport().findChildren(EditorMultiplo) if w.isVisible())
+    assert [editor.item(i).text() for i in range(editor.count())] == ["Dispositivos", "Ferramentaria"]
+    editor._alternar(editor.item(0))
+    editor._alternar(editor.item(1))
+    grade.itemDelegate().setModelData(editor, grade.model(), indice)
+    assert com_commodities.base.fornecedores.obter("f3").commodity_ids == ["c2", "c1"]
+    assert grade.modelo.linhas[linha].valores["email_buyer"] == "caio@op.com; bia@op.com"
+
+
+def test_nova_solicitacao_filtra_por_commodity(com_commodities, app):
+    from rfq_control.ui.dialogo_pacote import DialogoPacote
+
+    dialogo = DialogoPacote(com_commodities)
+    lista = dialogo.fornecedores
+
+    def visiveis():
+        return [lista.lista.item(i).data(Qt.ItemDataRole.UserRole)
+                for i in range(lista.lista.count()) if not lista.lista.item(i).isHidden()]
+
+    assert visiveis() == ["f1", "f3", "f2"]
+    dialogo.commodity.setCurrentIndex(dialogo.commodity.findData("c2"))  # commodity do pacote filtra a lista
+    assert visiveis() == ["f2"]
+    lista.commodity.setCurrentIndex(lista.commodity.findData("__sem__"))
+    assert visiveis() == ["f3"]
+    lista.commodity.setCurrentIndex(0)
+    lista.idioma.setCurrentIndex(lista.idioma.findData("EN"))
+    assert visiveis() == ["f2"]
+    lista.idioma.setCurrentIndex(0)
+    lista._marcar_visiveis(True)
+    lista.so_marcados.setChecked(True)
+    assert visiveis() == ["f1", "f3", "f2"] and len(lista.selecionados()) == 3
+    lista._marcar_visiveis(False, todos=True)
+    assert visiveis() == [] and "0 marcado" in lista.contador.text()
+
+    dialogo.projeto.setCurrentIndex(dialogo.projeto.findData("prj1"))
+    dialogo.tabela_itens.item(0, 0).setText("PEÇA 1")
+    lista.so_marcados.setChecked(False)
+    for i in range(lista.lista.count()):
+        if lista.lista.item(i).data(Qt.ItemDataRole.UserRole) == "f2":
+            lista.lista.item(i).setCheckState(Qt.CheckState.Checked)
+    dialogo._salvar()
+    assert com_commodities.base.pacotes.obter(dialogo.original.id).commodity_id == "c2"
+
+
+def test_excluir_rascunhos_oferece_excluir_pacote_vazio(janela, pacote_exemplo, monkeypatch):
+    from rfq_control.ui import pagina_rfqs
+
+    pacote, rfqs = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1", "f2"])
+    pagina = janela.ir_para("rfqs")
+    pagina.tabela.selectAll()
+    perguntas = []
+    monkeypatch.setattr(pagina_rfqs, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    pagina._excluir()
+    assert len(perguntas) == 2 and pacote.titulo in perguntas[1]
+    assert not len(janela.base.rfqs) and janela.base.pacotes.obter(pacote.id) is None
+
+
+def test_agradecimento_pelo_dialogo(com_commodities, pacote_exemplo, monkeypatch, mensagens):
+    from rfq_control.ui import dialogo_agradecimento
+    from rfq_control.ui.dialogo_agradecimento import DialogoAgradecimento
+
+    base = com_commodities.base
+    _, rfqs = srv.criar_pacote_com_rfqs(base, pacote_exemplo, ["f1", "f2"])
+    for rfq in rfqs:
+        srv.registrar_envio(base, rfq, base.fornecedores.obter(rfq.fornecedor_id).idioma, "enviada")
+    abertos = []
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda email, enviar=False: abertos.append(email))
+    monkeypatch.setattr(dialogo_agradecimento, "mostrar_resultado", lambda *a, **k: None)
+    dialogo = DialogoAgradecimento(com_commodities, "prj1")
+    assert dialogo.tabela.rowCount() == 2 and len(dialogo.rfq_ids()) == 2
+    assert dialogo.novo_status.currentData() == StatusRFQ.CANCELADA.value  # sugerido para "declinado"
+    assert dialogo.botao_enviar.text() == "Abrir 2 e-mail(s)"
+    dialogo._enviar()
+    assert len(abertos) == 2 and "foi declinado" in abertos[0].html
+    assert "bia@op.com" in abertos[0].copia  # Commodity Buyer em cópia
+    assert all(base.rfqs.obter(r.id).status == StatusRFQ.CANCELADA for r in rfqs)
+    assert not [m for m in mensagens if m[0] == "critical"]
+
+
+def test_janela_confirma_envio_pelos_itens_enviados(janela, pacote_exemplo, monkeypatch):
+    from datetime import timedelta
+
+    from outlook_falso import ItemFalso, OutlookFalso
+
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda *_a, **_k: None)
+    _, [rfq] = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1"])
+    rfq = envio_email.gerar_email_rfq(janela.base, rfq.id).rfq
+    outlook = OutlookFalso([ItemFalso(rfq.assunto_email, rfq.aguardando_envio_desde + timedelta(minutes=1))])
+    conexoes = []
+    monkeypatch.setattr(envio_email, "_conectar_outlook", lambda iniciar=True: conexoes.append(iniciar) or outlook)
+    [confirmada] = janela.verificar_envios(forcar=True)
+    assert conexoes == [False]  # a conferência automática só usa um Outlook já aberto
+    assert confirmada.status == StatusRFQ.ENVIADA
+    assert "Envio confirmado" in janela.statusBar().currentMessage()
+    assert janela.verificar_envios(forcar=True) == []  # nada pendente: nem consulta o Outlook

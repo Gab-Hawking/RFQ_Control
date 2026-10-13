@@ -290,6 +290,23 @@ class FiltroBusca(QSortFilterProxyModel):
             return str(a) < str(b)
 
 
+class DelegadoBase(QStyledItemDelegate):
+    """Célula sem o retângulo de foco (a linha selecionada já mostra onde se está).
+
+    Os editores criados para a célula recebem o nome ``editorCelula`` (moldura azul no tema).
+    """
+
+    def createEditor(self, pai, opcao, indice):  # noqa: N802
+        editor = super().createEditor(pai, opcao, indice)
+        if editor is not None:
+            editor.setObjectName("editorCelula")
+        return editor
+
+    def initStyleOption(self, opcao: QStyleOptionViewItem, indice: QModelIndex) -> None:  # noqa: N802
+        super().initStyleOption(opcao, indice)
+        opcao.state &= ~QStyle.StateFlag.State_HasFocus
+
+
 class Tabela(QTableView):
     """Tabela somente leitura com busca, ordenação e seleção de linhas."""
 
@@ -309,10 +326,11 @@ class Tabela(QTableView):
             if selecao_multipla else QAbstractItemView.SelectionMode.SingleSelection
         )
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setItemDelegate(DelegadoBase(self))
         self.setShowGrid(False)
         self.setWordWrap(False)
         self.verticalHeader().setVisible(False)
-        self.verticalHeader().setDefaultSectionSize(30)
+        self.verticalHeader().setDefaultSectionSize(32)
         cabecalho = self.horizontalHeader()
         cabecalho.setHighlightSections(False)
         cabecalho.setSectionsMovable(True)
@@ -360,7 +378,7 @@ class Tabela(QTableView):
         super().keyPressEvent(evento)
 
 
-class DelegadoSituacao(QStyledItemDelegate):
+class DelegadoSituacao(DelegadoBase):
     """Desenha a situação como etiqueta: bolinha colorida + texto em tinta."""
 
     def paint(self, pintor: QPainter, opcao: QStyleOptionViewItem, indice: QModelIndex) -> None:
@@ -393,7 +411,7 @@ class DelegadoSituacao(QStyledItemDelegate):
         pintor.restore()
 
 
-class DelegadoMedidor(QStyledItemDelegate):
+class DelegadoMedidor(DelegadoBase):
     """Percentual (0–1) como barra: preenchimento azul sobre trilho azul-claro."""
 
     def paint(self, pintor: QPainter, opcao: QStyleOptionViewItem, indice: QModelIndex) -> None:

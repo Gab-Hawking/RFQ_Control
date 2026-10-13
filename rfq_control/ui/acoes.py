@@ -49,8 +49,11 @@ def gerar_emails(
     if avisos:
         avisar(janela, "\n".join(avisos))
     if gerados:
-        texto = "cobrança" if tipo == TipoModelo.COBRANCA else "RFQ"
-        janela.mensagem(f"{gerados} e-mail(s) de {texto} gerado(s). Revise e clique em Enviar no Outlook.")
+        if tipo == TipoModelo.COBRANCA:
+            janela.mensagem(f"{gerados} e-mail(s) de cobrança gerado(s). Revise e clique em Enviar no Outlook.")
+        else:
+            janela.mensagem(f"{gerados} e-mail(s) de RFQ abertos. A RFQ passa a Enviada quando o e-mail aparecer "
+                            "nos Itens Enviados do Outlook.")
     return gerados
 
 
@@ -113,11 +116,23 @@ def enviar_emails(
     return dialogo.exec() == QDialog.DialogCode.Accepted
 
 
+def agradecimento(janela: JanelaPrincipal, projeto_id: str | None = None) -> bool:
+    """E-mail de agradecimento / status do projeto para os fornecedores das RFQs enviadas."""
+    from ..servicos.agradecimento import projetos_com_rfqs_enviadas
+    from .dialogo_agradecimento import DialogoAgradecimento
+
+    if not projetos_com_rfqs_enviadas(janela.base):
+        informar(janela, "Ainda não há RFQs enviadas. O agradecimento é para fornecedores que já receberam a RFQ.")
+        return False
+    dialogo = DialogoAgradecimento(janela, projeto_id)
+    return dialogo.exec() == QDialog.DialogCode.Accepted
+
+
 def nova_solicitacao(janela: JanelaPrincipal) -> bool:
     from .dialogo_pacote import DialogoPacote
 
     if not len(janela.base.projetos):
-        informar(janela, "Cadastre ao menos um projeto antes (Base de dados → Cadastro de Projetos, ou botão '+' ao lado do projeto).")
+        informar(janela, "Cadastre ao menos um projeto antes (Base de dados → Projetos, ou botão '+' ao lado do projeto).")
     dialogo = DialogoPacote(janela)
     if dialogo.exec() != QDialog.DialogCode.Accepted:
         return False
