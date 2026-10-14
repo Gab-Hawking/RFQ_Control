@@ -25,7 +25,9 @@ macros — sem travar, com tudo registrado e com mais recursos.
   **abrir no Outlook para revisar** (como a macro) ou **enviar automaticamente pelo Outlook**.
 - **Envio confirmado de verdade:** e-mail aberto para revisão deixa a RFQ em **Aguardando envio**; ela só
   passa a **Enviada** quando o e-mail aparece nos **Itens Enviados** do Outlook (o app confere ao abrir e ao
-  voltar para ele) ou com *Confirmar envio*. Se o rascunho for apagado sem enviar, nada é registrado.
+  voltar para ele e a cada 30 s enquanto houver pendentes) ou com *Confirmar envio*. Se o rascunho for
+  apagado sem enviar, nada é registrado como enviado: use *E-mail não enviado* (ou Alterar status →
+  Rascunho) para a RFQ voltar a rascunho.
 - **Nova solicitação em um passo:** escolha o projeto e a commodity, cole os itens do Excel, anexe
   CDC/desenhos, marque os fornecedores (filtros por commodity, idioma e só marcados) → uma RFQ por fornecedor
   (`RFQ2026001`, `RFQ2026002`…) e a tela de envio já aberta.

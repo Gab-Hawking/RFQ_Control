@@ -70,3 +70,12 @@ def test_pre_visualizacao(projeto_enviado):
     base, abertos, enviadas, _ = projeto_enviado
     email = agradecimento.pre_visualizar(base, [r.id for r in enviadas], "outra_proposta")
     assert "outra proposta" in email.html and not abertos
+
+
+def test_outra_proposta_nao_rebaixa_a_vencedora(projeto_enviado):
+    base, abertos, enviadas, _ = projeto_enviado
+    srv.alterar_status(base, [enviadas[0].id], StatusRFQ.SELECIONADA)
+    agradecimento.enviar_agradecimento(
+        base, [r.id for r in enviadas], "outra_proposta", novo_status=StatusRFQ.NAO_SELECIONADA)
+    assert base.rfqs.obter(enviadas[0].id).status == StatusRFQ.SELECIONADA
+    assert base.rfqs.obter(enviadas[1].id).status == StatusRFQ.NAO_SELECIONADA

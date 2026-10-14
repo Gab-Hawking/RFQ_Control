@@ -22,6 +22,21 @@ from rfq_control.modelos import (  # noqa: E402
 )
 
 
+@pytest.fixture(autouse=True)
+def sem_outlook_real(monkeypatch):
+    """Nenhum teste fala com o Outlook de verdade nem abre arquivos (em Windows isso abriria e-mails reais).
+
+    Os testes que precisam do Outlook trocam ``_conectar_outlook`` pelo ``tests/outlook_falso.py``.
+    """
+    from rfq_control.servicos import envio_email
+
+    def sem_outlook(iniciar=True):
+        raise envio_email.ErroOutlook("Outlook desativado nos testes.")
+
+    monkeypatch.setattr(envio_email, "_conectar_outlook", sem_outlook)
+    monkeypatch.setattr(envio_email, "abrir_arquivo", lambda _caminho: None)
+
+
 @pytest.fixture
 def pasta_dados(tmp_path: Path) -> Path:
     return tmp_path / "dados"

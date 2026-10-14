@@ -49,6 +49,7 @@ def pre_visualizar_html(modelo: ModeloEmail, empresa: str) -> str:
         "motivo": motivo.textos[idioma] if motivo else "",
         "projeto": projeto.nome,
         "cliente": projeto.cliente,
+        "projeto_cliente": f"{projeto.nome} ({'customer' if idioma == Idioma.EN else 'cliente'} {projeto.cliente})",
         "planta": projeto.planta,
         "solicitante": "Solicitante Exemplo",
         "pacote": "Pacote de exemplo",
@@ -191,7 +192,7 @@ class PaginaModelos(QWidget):
             return
         padrao = next((m for m in modelos_email_padrao()
                        if m.tipo == self.atual.tipo and m.idioma == self.atual.idioma), None)
-        if padrao and confirmar(self, "Substituir o texto no editor pelo texto padrão?", "Restaurar", "Restaurar"):
+        if padrao and confirmar(self.window(), "Substituir o texto no editor pelo texto padrão?", "Restaurar", "Restaurar"):
             self.assunto.setText(padrao.assunto)
             self.corpo.setPlainText(padrao.corpo)
 
@@ -203,7 +204,7 @@ class PaginaModelos(QWidget):
         ok, html = executar(self, lambda: pre_visualizar_html(modelo, config.empresa))
         if not ok:
             return
-        dialogo = QDialog(self)
+        dialogo = QDialog(self.window())
         dialogo.setWindowTitle(f"Pré-visualização — {modelo.tipo.value} ({modelo.idioma.rotulo})")
         dialogo.resize(820, 640)
         layout = QVBoxLayout(dialogo)

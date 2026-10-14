@@ -124,14 +124,29 @@ def test_outlook_disponivel(base_populada, rfqs, monkeypatch):
 
 
 def test_cobranca_nao_altera_prazo(base_populada, rfqs, monkeypatch):
-    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda _: None)
-    enviada = envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE).rfq
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda *_a, **_k: None)
+    enviada = envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE, enviar=True).rfq
+    assert enviada.status == StatusRFQ.ENVIADA and enviada.prazo == date(2026, 10, 6)
     cobranca = envio_email.gerar_email_rfq(
         base_populada, rfqs[0].id, tipo=TipoModelo.COBRANCA, hoje=date(2026, 10, 8)
     )
     assert cobranca.rfq.prazo == enviada.prazo
+    # o e-mail cita o prazo que o fornecedor recebeu (não um recalculado a partir do dia da cobrança)
+    assert "cujo prazo de retorno era terça-feira, 6 de outubro de 2026" in cobranca.email.html
     assert "Ainda não recebemos" in cobranca.email.html
     assert "cobrança" in cobranca.rfq.historico[-1].descricao
+
+
+def test_cobranca_de_rfq_aguardando_envio_usa_o_prazo_do_email(base_populada, rfqs, monkeypatch):
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda *_a, **_k: None)
+    aberta = envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE).rfq  # prazo escrito: 06/10
+    assert aberta.aguardando_envio() and aberta.prazo == date(2026, 10, 6)
+    cobranca = montar_email(base_populada, aberta, tipo=TipoModelo.COBRANCA, hoje=date(2026, 10, 13))
+    assert cobranca.prazo == date(2026, 10, 6) and "6 de outubro de 2026" in cobranca.html
+    citada = envio_email.cobranca_com_original(base_populada, aberta, cobranca)
+    assert "19 de outubro" not in citada.html and citada.html.count("6 de outubro de 2026") == 2
+    # reabrir o e-mail da RFQ (novo envio) conta o prazo a partir do dia de novo
+    assert montar_email(base_populada, aberta, hoje=date(2026, 10, 13)).prazo == date(2026, 10, 19)
 
 
 def test_inserir_antes_da_assinatura():
@@ -265,12 +280,18 @@ def test_cobranca_responde_ao_email_da_rfq(base_populada, rfqs, monkeypatch):
     monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda *_a, **_k: None)
     rfq = envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE, enviar=True).rfq
     original = ItemFalso(rfq.assunto_email, datetime(2026, 9, 30, 10))
-    outlook = OutlookFalso([ItemFalso(f"RE: {rfq.assunto_email}", datetime(2026, 10, 2)), original])
+    # iscas mais recentes com o número da RFQ: resposta, agradecimento do app e lembrete da v0.2
+    agradecimento = ItemFalso(f"{rfq.numero} / Customer: Cliente A / Project: Projeto Alfa – Agradecimento",
+                              datetime(2026, 10, 5))
+    lembrete = ItemFalso(f"Lembrete / Reminder: {rfq.numero} / Customer: Cliente A", datetime(2026, 10, 3))
+    outlook = OutlookFalso([ItemFalso(f"RE: {rfq.assunto_email}", datetime(2026, 10, 2)), agradecimento, lembrete,
+                            original])
     monkeypatch.setattr(envio_email, "_conectar_outlook", lambda iniciar=True: outlook)
 
     resultado = envio_email.gerar_email_rfq(base_populada, rfq.id, tipo=TipoModelo.COBRANCA, hoje=date(2026, 10, 8))
     assert resultado.resposta and resultado.via_outlook
     [resposta] = original.respostas  # respondeu ao e-mail original, não à resposta anterior
+    assert agradecimento.respostas == [] and lembrete.respostas == []
     assert resposta.exibido and not resposta.enviado_agora
     corpo = resposta.HTMLBody
     assert corpo.index("Ainda não recebemos") < corpo.index("Assinatura") < corpo.index("De: eu")
@@ -304,3 +325,23 @@ def test_cobranca_em_eml_aponta_para_o_email_da_rfq(base_populada, rfqs, monkeyp
     mensagem = message_from_bytes(resultado.arquivo_eml.read_bytes(), policy=policy.default)
     assert mensagem["In-Reply-To"] == rfq.message_id and mensagem["Subject"] == f"RE: {rfq.assunto_email}"
     assert list(mensagem.iter_attachments()) == []
+
+
+def test_paragrafo_em_negrito_com_varias_linhas():
+    html, _ = renderizar("**Prazo: {{prazo}}\nEnviar para compras@exemplo.com**", {"prazo": "amanhã"}, {})
+    assert "**" not in html
+    assert "<b>Prazo: amanhã<br>Enviar para compras@exemplo.com</b>" in html and "#FFF4D6" in html
+
+
+def test_agradecimento_sem_cliente_nao_deixa_parenteses_vazios(base_populada, pacote_exemplo):
+    from rfq_control.servicos.email_rfq import montar_email_agradecimento
+
+    projeto = base_populada.projetos.obter("prj1")
+    base_populada.projetos.salvar(projeto.model_copy(update={"cliente": ""}))
+    _, [rfq] = srv.criar_pacote_com_rfqs(base_populada, pacote_exemplo, ["f1"])
+    rfq = srv.registrar_envio(base_populada, rfq, Idioma.PT, "enviada", HOJE)
+    fornecedor = base_populada.fornecedores.obter("f1")
+    for idioma in Idioma:
+        email = montar_email_agradecimento(base_populada, fornecedor, [rfq], idioma, "texto")
+        assert "( )" not in email.html and "(cliente )" not in email.html and "(customer )" not in email.html
+        assert "Projeto Alfa," in email.html

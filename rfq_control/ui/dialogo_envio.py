@@ -229,7 +229,9 @@ class DialogoEnvio(QDialog):
         marcar = (
             fornecedor.id in self._marcar_inicial
             if self._marcar_inicial
+            # rascunho ainda não aberto: os "Aguardando envio" já tiveram o e-mail aberto (evita duplicar)
             else situacao.rfq is not None and situacao.rfq.status == StatusRFQ.RASCUNHO
+            and not situacao.rfq.aguardando_envio()
         )
         caixa = QTableWidgetItem()
         caixa.setData(Qt.ItemDataRole.UserRole, fornecedor.id)

@@ -60,7 +60,9 @@ O CI (`.github/workflows/build.yml`) roda os testes no Linux e no Windows e publ
 - **Atrasada** não é status gravado: é a situação calculada de uma RFQ `Enviada` com prazo vencido.
 - **Aguardando envio** também é situação calculada: RFQ em `Rascunho` cujo e-mail foi aberto para revisão
   (`aguardando_envio_desde`). Só vira `Enviada` quando o e-mail aparece nos Itens Enviados do Outlook ou o
-  usuário confirma; se o rascunho do e-mail for apagado, continua em rascunho.
+  usuário confirma; se o rascunho do e-mail for apagado, nada vira Enviada e o usuário a devolve para
+  `Rascunho` ("E-mail não enviado" / Alterar status → Rascunho, que limpa o prazo proposto). Não pode ser
+  excluída enquanto estiver aguardando. Cobrança/agradecimento usam o prazo e o idioma gravados.
 - **Commodity**: família de itens com um **Commodity Buyer** (comprador da OP), que vai em cópia nos e-mails.
   Fornecedor tem várias commodities; pacote tem uma (opcional). Cc = Supplier Cc + buyer + cópia padrão.
 - **Idioma** (Português, Espanhol, Inglês) é do fornecedor; RFQs em rascunho acompanham o idioma dele,

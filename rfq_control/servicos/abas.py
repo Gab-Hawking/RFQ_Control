@@ -27,7 +27,7 @@ from pydantic import BaseModel, ValidationError
 from ..armazenamento import BaseDados
 from ..modelos import Commodity, Contato, Feriado, Fornecedor, Idioma, Projeto, Solicitante, agora, separar_emails
 from . import cadastros
-from .formatos import data_curta, ler_data, normalizar_nome
+from .formatos import data_curta, ler_data, nomes_de_opcoes, normalizar_nome
 from .leitor_xlsx import ErroPlanilha, LeitorXlsx, Valor, data_excel, letras_coluna
 from .rfq import ErroNegocio
 
@@ -56,11 +56,6 @@ class ColunaAba:
         if self.opcoes_base and base is not None:
             return tuple(self.opcoes_base(base))
         return self.opcoes
-
-
-def separar_valores(texto: str) -> list[str]:
-    """'A; B' → ['A', 'B'] (valores de uma coluna com várias opções)."""
-    return [v.strip() for v in re.split(r"[;\n]", texto or "") if v.strip()]
 
 
 def chave_cabecalho(texto: Any) -> str:
@@ -207,14 +202,12 @@ def _contato(nome: str, email: str, copia: bool, telefone: str) -> Contato:
 def _ids_commodities(base: BaseDados, texto: str) -> list[str]:
     por_nome = {normalizar_nome(c.nome): c for c in base.commodities}
     ids, faltando = [], []
-    for valor in separar_valores(texto):
-        partes = [valor] if normalizar_nome(valor) in por_nome else [p for p in valor.split(",") if p.strip()]
-        for parte in partes:
-            commodity = por_nome.get(normalizar_nome(parte))
-            if commodity is None:
-                faltando.append(parte.strip())
-            elif commodity.id not in ids:
-                ids.append(commodity.id)
+    for nome in nomes_de_opcoes(texto, set(por_nome)):
+        commodity = por_nome.get(normalizar_nome(nome))
+        if commodity is None:
+            faltando.append(nome)
+        elif commodity.id not in ids:
+            ids.append(commodity.id)
     if faltando:
         raise ErroNegocio(
             "Commodity não cadastrada: " + ", ".join(faltando) + ". Cadastre na aba Commodities."
@@ -589,7 +582,7 @@ def _criar_opcoes_faltantes(base: BaseDados, definicao: DefinicaoAba, tabela: _T
         existentes = {normalizar_nome(o) for o in coluna.opcoes_de(base)}
         for _numero, valores in tabela.linhas:
             for letra in letras:
-                for nome in separar_valores(_texto_celula(valores.get(letra), coluna)):
+                for nome in nomes_de_opcoes(_texto_celula(valores.get(letra), coluna), existentes):
                     if normalizar_nome(nome) not in existentes:
                         coluna.criar_opcao(base, nome)
                         existentes.add(normalizar_nome(nome))
@@ -625,7 +618,7 @@ def importar_arquivo(base: BaseDados, definicao: DefinicaoAba, caminho: Path | s
         for chave, letras in tabela.mapa.items():
             coluna = definicao.coluna(chave)
             textos = [_texto_celula(valores.get(letra), coluna) for letra in letras]
-            separador = "; " if coluna.tipo == "emails" else " "
+            separador = "; " if coluna.tipo in ("emails", "multilista") else " "
             linha[chave] = separador.join(t for t in textos if t)
         if not any(linha.values()):
             continue

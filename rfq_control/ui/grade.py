@@ -27,8 +27,8 @@ from PySide6.QtWidgets import (
 
 from ..armazenamento import BaseDados, ErroDados
 from ..servicos import cadastros
-from ..servicos.abas import DefinicaoAba, separar_valores
-from ..servicos.formatos import ler_data
+from ..servicos.abas import DefinicaoAba
+from ..servicos.formatos import ler_data, normalizar_nome, separar_valores
 from ..servicos.rfq import ErroNegocio
 from . import estilo
 from .componentes import PAPEL_ORDEM, DelegadoBase, FiltroBusca, sem_acentos
@@ -61,9 +61,16 @@ class ModeloGrade(QAbstractTableModel):
         self.linhas: list[LinhaGrade] = []
 
     # ------------------------------------------------ carga
-    def carregar(self) -> None:
+    def carregar(self, manter_pendentes: bool = False) -> None:
+        """Lê os registros de novo. ``manter_pendentes``: linhas não salvas continuam como estão (as demais
+        são atualizadas — ex.: uma commodity renomeada em outra aba)."""
+        pendentes = self.pendentes() if manter_pendentes else []
+        por_id = {l.id: l for l in pendentes if l.id}
         self.beginResetModel()
-        self.linhas = [LinhaGrade(r, self.definicao.para_linha(self.base, r)) for r in self.definicao.listar(self.base)]
+        self.linhas = [
+            por_id.get(r.id) or LinhaGrade(r, self.definicao.para_linha(self.base, r))
+            for r in self.definicao.listar(self.base)
+        ] + [l for l in pendentes if l.registro is None]
         self.endResetModel()
         self.alterado.emit()
 
@@ -243,16 +250,17 @@ class EditorMultiplo(QListWidget):
         super().keyPressEvent(evento)
 
     def definir(self, valores: list[str]) -> None:
-        chaves = {sem_acentos(v) for v in valores}
+        # mesma comparação do cadastro (maiúsculas e espaços): "Fundição" e "Fundicao" são commodities diferentes
+        chaves = {normalizar_nome(v) for v in valores}
         presentes = set()
         for linha in range(self.count()):
             item = self.item(linha)
             if item.flags() & Qt.ItemFlag.ItemIsEnabled:
-                presentes.add(sem_acentos(item.text()))
-                item.setCheckState(Qt.CheckState.Checked if sem_acentos(item.text()) in chaves
+                presentes.add(normalizar_nome(item.text()))
+                item.setCheckState(Qt.CheckState.Checked if normalizar_nome(item.text()) in chaves
                                    else Qt.CheckState.Unchecked)
         for valor in valores:  # valor que não está mais na lista: mostra marcado para não perder
-            if sem_acentos(valor) not in presentes:
+            if normalizar_nome(valor) not in presentes:
                 self._adicionar(valor).setCheckState(Qt.CheckState.Checked)
         if self.count():
             self.setCurrentRow(0)
@@ -421,13 +429,15 @@ class GradeEditavel(QTableView):
             linha_inicial, coluna_inicial = origem.row(), origem.column()
         else:
             linha_inicial, coluna_inicial = len(self.modelo.linhas), 0
-        colunas = self.definicao.colunas
+        # as colunas coladas caem nas colunas editáveis a partir da atual (as calculadas são puladas,
+        # como na planilha de 'Baixar modelo', que só tem as editáveis)
+        destino = [c for c in self.definicao.colunas[coluna_inicial:] if not c.somente_leitura]
         alteracoes: dict[int, dict[str, str]] = {}
         for deslocamento, linha_texto in enumerate(linhas_texto):
             valores = {}
             for passo, valor in enumerate(linha_texto.split("\t")):
-                if coluna_inicial + passo < len(colunas):
-                    valores[colunas[coluna_inicial + passo].chave] = valor.strip()
+                if passo < len(destino):
+                    valores[destino[passo].chave] = valor.strip()
             alteracoes[linha_inicial + deslocamento] = valores
         salvas, erros = self.modelo.definir_celulas(alteracoes)
         texto_erros = f" · {erros} com erro (passe o mouse na linha vermelha)" if erros else ""

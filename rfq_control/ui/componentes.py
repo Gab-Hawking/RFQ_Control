@@ -60,20 +60,26 @@ PAPEL_OBJETO = Qt.ItemDataRole.UserRole + 2
 # ---------------------------------------------------------------- mensagens
 
 
+def janela_de(pai: QWidget | None) -> QWidget | None:
+    """A janela do widget: diálogos abertos com ela como pai não herdam as cores de uma aba (texto escuro
+    sobre o fundo cinza do diálogo)."""
+    return pai.window() if pai is not None else None
+
+
 def informar(pai: QWidget | None, texto: str, titulo: str = "RFQ Control") -> None:
-    QMessageBox.information(pai, titulo, texto)
+    QMessageBox.information(janela_de(pai), titulo, texto)
 
 
 def avisar(pai: QWidget | None, texto: str, titulo: str = "Atenção") -> None:
-    QMessageBox.warning(pai, titulo, texto)
+    QMessageBox.warning(janela_de(pai), titulo, texto)
 
 
 def erro(pai: QWidget | None, texto: str, titulo: str = "Erro") -> None:
-    QMessageBox.critical(pai, titulo, texto)
+    QMessageBox.critical(janela_de(pai), titulo, texto)
 
 
 def confirmar(pai: QWidget | None, texto: str, titulo: str = "Confirmar", botao_sim: str = "Sim") -> bool:
-    caixa = QMessageBox(QMessageBox.Icon.Question, titulo, texto, parent=pai)
+    caixa = QMessageBox(QMessageBox.Icon.Question, titulo, texto, parent=janela_de(pai))
     sim = caixa.addButton(botao_sim, QMessageBox.ButtonRole.AcceptRole)
     caixa.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
     caixa.exec()
@@ -112,7 +118,7 @@ def mostrar_resultado(
     pasta_backup=None,
 ) -> None:
     """Janela de resultado (importação, envio de e-mails…) com resumo e lista de detalhes."""
-    dialogo = QDialog(pai)
+    dialogo = QDialog(janela_de(pai))
     dialogo.setWindowTitle(titulo)
     dialogo.resize(720, 520)
     layout = QVBoxLayout(dialogo)

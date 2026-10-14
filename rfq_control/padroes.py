@@ -91,7 +91,7 @@ ASSUNTOS_AGRADECIMENTO = {
 
 CORPO_AGRADECIMENTO_PT = """Caro {{contato}},
 
-Agradecemos a sua participação no processo de cotação do projeto {{projeto}} (cliente {{cliente}}), referente à(s) {{rfqs}}.
+Agradecemos a sua participação no processo de cotação do projeto {{projeto_cliente}}, referente à(s) {{rfqs}}.
 
 {{motivo}}
 
@@ -99,7 +99,7 @@ Agradecemos o tempo e a dedicação da sua equipe neste processo e contamos com 
 
 CORPO_AGRADECIMENTO_ES = """Estimado/a {{contato}}:
 
-Agradecemos su participación en el proceso de cotización del proyecto {{projeto}} (cliente {{cliente}}), referente a la(s) {{rfqs}}.
+Agradecemos su participación en el proceso de cotización del proyecto {{projeto_cliente}}, referente a la(s) {{rfqs}}.
 
 {{motivo}}
 
@@ -107,7 +107,7 @@ Agradecemos el tiempo y la dedicación de su equipo en este proceso y contamos c
 
 CORPO_AGRADECIMENTO_EN = """Dear {{contato}},
 
-Thank you for taking part in the quotation process for the project {{projeto}} (customer {{cliente}}), regarding {{rfqs}}.
+Thank you for taking part in the quotation process for the project {{projeto_cliente}}, regarding {{rfqs}}.
 
 {{motivo}}
 
@@ -209,6 +209,7 @@ VARIAVEIS_MODELO = {
     "rfq": "Número da RFQ",
     "projeto": "Nome do projeto",
     "cliente": "Cliente do projeto",
+    "projeto_cliente": "Projeto com o cliente entre parênteses (só o projeto, se não houver cliente)",
     "planta": "Planta do projeto",
     "solicitante": "Nome do solicitante",
     "pacote": "Título do pacote de cotação",

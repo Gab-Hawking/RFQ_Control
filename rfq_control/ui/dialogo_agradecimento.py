@@ -152,7 +152,8 @@ class DialogoAgradecimento(QDialog):
             caixa = QTableWidgetItem()
             caixa.setData(Qt.ItemDataRole.UserRole, rfq.id)
             caixa.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
-            marcada = rfq.status != StatusRFQ.CANCELADA  # canceladas já foram encerradas
+            # canceladas já foram encerradas; a vencedora (Selecionada) não recebe "não vamos seguir"
+            marcada = rfq.status not in (StatusRFQ.CANCELADA, StatusRFQ.SELECIONADA)
             caixa.setCheckState(Qt.CheckState.Checked if marcada else Qt.CheckState.Unchecked)
             self.tabela.setItem(linha, COL_MARCAR, caixa)
             fornecedor = self.base.fornecedores.obter(rfq.fornecedor_id)

@@ -24,11 +24,11 @@ def salvar_fornecedor(base: BaseDados, fornecedor: Fornecedor) -> Fornecedor:
     if ids != fornecedor.commodity_ids:
         fornecedor = fornecedor.model_copy(update={"commodity_ids": ids})
     salvo = base.fornecedores.salvar(fornecedor)
-    # RFQs ainda não enviadas acompanham o idioma do fornecedor
+    # RFQs ainda não enviadas acompanham o idioma do fornecedor (as com e-mail aberto já têm idioma)
     rascunhos = [
         r.model_copy(update={"idioma": salvo.idioma})
         for r in base.rfqs_do_fornecedor(salvo.id)
-        if r.status == StatusRFQ.RASCUNHO and r.idioma != salvo.idioma
+        if r.status == StatusRFQ.RASCUNHO and not r.aguardando_envio() and r.idioma != salvo.idioma
     ]
     if rascunhos:
         base.rfqs.salvar_varios(rascunhos)

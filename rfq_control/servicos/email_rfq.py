@@ -49,6 +49,7 @@ _ROTULOS = {
         "planta": "Planta",
         "projeto": "Projeto",
         "cliente": "Cliente",
+        "de_cliente": "cliente",
         "sop": "SOP",
         "lifetime": "Lifetime (anos)",
         "contato": "fornecedor",
@@ -66,6 +67,7 @@ _ROTULOS = {
         "planta": "Planta",
         "projeto": "Proyecto",
         "cliente": "Cliente",
+        "de_cliente": "cliente",
         "sop": "SOP",
         "lifetime": "Vida útil (años)",
         "contato": "proveedor",
@@ -83,6 +85,7 @@ _ROTULOS = {
         "planta": "Plant",
         "projeto": "Project",
         "cliente": "Customer",
+        "de_cliente": "customer",
         "sop": "SOP",
         "lifetime": "Lifetime (years)",
         "contato": "supplier",
@@ -215,7 +218,7 @@ def _quadro_destaque(conteudo_html: str) -> str:
 
 
 def _negrito(texto_escapado: str) -> str:
-    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", texto_escapado)
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", texto_escapado, flags=re.DOTALL)
 
 
 def renderizar(
@@ -250,8 +253,8 @@ def renderizar(
         texto = substituir(paragrafo, escapar=False)
         if not texto.replace("*", "").strip():
             continue
-        linhas = [_negrito(substituir(html.escape(linha), escapar=True)) for linha in paragrafo.split("\n")]
-        conteudo = "<br>".join(linhas)
+        # negrito depois de juntar as linhas: um **…** pode atravessar quebras de linha
+        conteudo = _negrito("<br>".join(substituir(html.escape(linha), escapar=True) for linha in paragrafo.split("\n")))
         if paragrafo.startswith("**") and paragrafo.endswith("**") and paragrafo.count("**") == 2:
             partes_html.append(_quadro_destaque(conteudo))
         else:
@@ -284,15 +287,39 @@ def _sem_repetidos(emails: list[str], excluir: set[str] = frozenset()) -> list[s
 
 
 def idioma_padrao(rfq: RFQ, fornecedor: Fornecedor) -> Idioma:
-    """RFQ ainda não enviada segue o idioma atual do fornecedor; já enviada, o idioma em que foi enviada."""
-    return fornecedor.idioma if rfq.status == StatusRFQ.RASCUNHO else rfq.idioma
+    """RFQ ainda não enviada segue o idioma atual do fornecedor; já enviada (ou com o e-mail aberto
+    aguardando envio), o idioma em que o e-mail foi escrito."""
+    if rfq.status == StatusRFQ.RASCUNHO and not rfq.aguardando_envio():
+        return fornecedor.idioma
+    return rfq.idioma
+
+
+def prazo_do_email(base: BaseDados, rfq: RFQ, pacote: Pacote, tipo: TipoModelo, hoje: date,
+                   manter_prazo: bool = False) -> date:
+    """Prazo escrito no e-mail.
+
+    E-mail de RFQ novo (rascunho): conta a partir de hoje, a menos que haja um prazo futuro digitado à mão.
+    Cobrança, agradecimento, reenvio e a citação do e-mail original (``manter_prazo``): o prazo gravado.
+    """
+    if rfq.prazo is not None and (manter_prazo or tipo != TipoModelo.RFQ or rfq.status != StatusRFQ.RASCUNHO):
+        return rfq.prazo
+    if rfq.prazo is not None and not rfq.aguardando_envio() and rfq.prazo >= hoje:
+        return rfq.prazo  # prazo digitado no rascunho
+    return prazo_para(base, pacote, hoje)
 
 
 def emails_commodity_buyer(base: BaseDados, fornecedor: Fornecedor, pacotes: list[Pacote]) -> list[str]:
-    """Commodity Buyer em cópia: o da commodity do pacote; sem commodity no pacote, os do fornecedor."""
-    ids = [p.commodity_id for p in pacotes if p.commodity_id] or fornecedor.commodity_ids
+    """Commodity Buyer em cópia, pacote a pacote: o da commodity do pacote; sem commodity, os do fornecedor."""
+    ids: list[str] = []
+    for pacote in pacotes or [None]:
+        ids += [pacote.commodity_id] if pacote and pacote.commodity_id else list(fornecedor.commodity_ids)
     commodities = (base.commodities.obter(i) for i in dict.fromkeys(ids))
-    return [c.email for c in commodities if c and c.email]
+    return list(dict.fromkeys(c.email for c in commodities if c and c.email))
+
+
+def _projeto_cliente(projeto: Projeto, rotulos: dict[str, str]) -> str:
+    """'Projeto Alfa (cliente Cliente A)' — ou só o projeto, quando não há cliente."""
+    return f"{projeto.nome} ({rotulos['de_cliente']} {projeto.cliente})" if projeto.cliente else projeto.nome
 
 
 def destinatarios(
@@ -326,6 +353,7 @@ def montar_email(
     idioma: Idioma | None = None,
     tipo: TipoModelo = TipoModelo.RFQ,
     hoje: date | None = None,
+    manter_prazo: bool = False,
 ) -> EmailMontado:
     pacote: Pacote | None = base.pacotes.obter(rfq.pacote_id)
     fornecedor = base.fornecedores.obter(rfq.fornecedor_id)
@@ -339,11 +367,8 @@ def montar_email(
     config = base.configuracoes
     para, copia = destinatarios(base, fornecedor, [pacote])
 
-    # Em rascunho o prazo ainda é uma proposta: vale o calculado a partir de hoje.
-    if rfq.status == StatusRFQ.RASCUNHO or rfq.prazo is None:
-        prazo = prazo_para(base, pacote, hoje or date.today())
-    else:
-        prazo = rfq.prazo
+    tipo = TipoModelo(tipo)
+    prazo = prazo_do_email(base, rfq, pacote, tipo, hoje or date.today(), manter_prazo)
     rotulos = _ROTULOS[idioma]
     variaveis = {
         "contato": fornecedor.nome_contato() or rotulos["contato"],
@@ -353,6 +378,7 @@ def montar_email(
         "rfqs": rfq.numero,
         "projeto": projeto.nome,
         "cliente": projeto.cliente,
+        "projeto_cliente": _projeto_cliente(projeto, rotulos),
         "planta": projeto.planta,
         "solicitante": solicitante.nome if solicitante else "",
         "pacote": pacote.titulo,
@@ -403,6 +429,7 @@ def montar_email_agradecimento(
         "rfqs": ", ".join(numeros),
         "projeto": projeto.nome,
         "cliente": projeto.cliente,
+        "projeto_cliente": _projeto_cliente(projeto, rotulos),
         "planta": projeto.planta,
         "solicitante": solicitante.nome if solicitante else "",
         "pacote": ", ".join(p.titulo for p in pacotes),

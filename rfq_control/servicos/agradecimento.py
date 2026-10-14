@@ -119,5 +119,9 @@ def enviar_agradecimento(
         concluidas += [r.id for r in rfqs]
         resultado.itens.append(ItemDisparo(fornecedor.nome, numeros, idioma, True, acao))
     if novo_status and concluidas:
-        alterar_status(base, concluidas, StatusRFQ(novo_status), f"e-mail de agradecimento: {opcao.rotulo}")
+        novo_status = StatusRFQ(novo_status)
+        if novo_status == StatusRFQ.NAO_SELECIONADA:
+            # a vencedora nunca é rebaixada por um agradecimento de "outra proposta"
+            concluidas = [i for i in concluidas if base.rfqs.obter(i).status != StatusRFQ.SELECIONADA]
+        alterar_status(base, concluidas, novo_status, f"e-mail de agradecimento: {opcao.rotulo}")
     return resultado

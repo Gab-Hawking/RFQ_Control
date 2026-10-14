@@ -125,6 +125,8 @@ class Commodity(Registro):
     @field_validator("nome")
     @classmethod
     def _validar_nome(cls, valor: str) -> str:
+        if re.search(r"[;\r\n]", valor or ""):
+            raise ValueError("o nome da commodity não pode ter ';' nem quebra de linha (o ';' separa commodities)")
         return _obrigatorio(valor, "Nome da commodity")
 
     @field_validator("email")

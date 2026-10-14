@@ -132,7 +132,10 @@ erDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Rascunho
-    Rascunho --> Enviada: e-mail gerado/enviado (grava data e prazo)
+    Rascunho --> AguardandoEnvio: e-mail aberto para revisão (situação calculada)
+    AguardandoEnvio --> Enviada: e-mail nos Itens Enviados do Outlook ou confirmação do usuário (grava data e prazo)
+    AguardandoEnvio --> Rascunho: e-mail não enviado (rascunho apagado)
+    Rascunho --> Enviada: envio direto pelo Outlook ou status alterado à mão
     Enviada --> Atrasada: prazo vencido sem resposta (automático)
     Atrasada --> Enviada: cobrança enviada / prazo prorrogado
     Enviada --> Respondida: cotação registrada
@@ -231,7 +234,8 @@ A assinatura é incluída automaticamente (a padrão do Outlook, ou a configurad
 
 Correções já embutidas em relação à macro: saudação com o nome real do contato, Cc do fornecedor
 + comprador, planta correta, prazo formatado no idioma do e-mail e gravado na RFQ, parágrafos
-preservados, HTML válido, colunas de descrição/volume/capacidade incluídas quando preenchidas.
+preservados, HTML válido; colunas sem valor ficam de fora (menos o volume anual, que sempre aparece) e
+não há colunas de capacidade/cobertura para o fornecedor preencher (removidas na v0.3.0).
 
 ## 5. Requisitos não funcionais
 

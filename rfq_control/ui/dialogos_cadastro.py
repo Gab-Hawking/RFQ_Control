@@ -101,7 +101,6 @@ class DialogoFornecedor(QDialog):
         cabecalho.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.contatos.setColumnWidth(0, 200)
         self.contatos.setColumnWidth(2, 170)
-        self._telefones = {c.email: c.telefone for c in fornecedor.contatos if c.email}
         for contato in fornecedor.contatos:
             self._adicionar_contato(contato)
         layout.addWidget(self.contatos, 1)
@@ -129,7 +128,10 @@ class DialogoFornecedor(QDialog):
     def _adicionar_contato(self, contato: Contato | None) -> None:
         linha = self.contatos.rowCount()
         self.contatos.insertRow(linha)
-        self.contatos.setItem(linha, 0, QTableWidgetItem(contato.nome if contato else ""))
+        nome = QTableWidgetItem(contato.nome if contato else "")
+        # o telefone saiu da tela, mas fica guardado na linha para não se perder ao salvar
+        nome.setData(Qt.ItemDataRole.UserRole, contato.telefone if contato else "")
+        self.contatos.setItem(linha, 0, nome)
         self.contatos.setItem(linha, 1, QTableWidgetItem(contato.email if contato else ""))
         tipo = QComboBox()
         tipo.addItem("Para", False)
@@ -149,10 +151,11 @@ class DialogoFornecedor(QDialog):
         contatos = []
         for linha in range(self.contatos.rowCount()):
             nome, email = self._texto(linha, 0), self._texto(linha, 1)
-            if not (nome or email):
+            item_nome = self.contatos.item(linha, 0)
+            telefone = (item_nome.data(Qt.ItemDataRole.UserRole) or "") if item_nome else ""
+            if not (nome or email or telefone):
                 continue
             copia = self.contatos.cellWidget(linha, 2).currentData()
-            telefone = self._telefones.get(email.lower(), "")  # telefone saiu da tela, mas não se perde
             contatos.append({"nome": nome, "email": email, "copia": copia, "telefone": telefone})
         commodities = [
             self.commodities.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.commodities.count())

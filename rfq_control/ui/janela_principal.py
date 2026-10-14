@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,12 +42,16 @@ MENU = [
 
 log = logging.getLogger(__name__)
 INTERVALO_VERIFICACAO = 10  # segundos entre duas consultas aos Itens Enviados do Outlook
+REPETIR_VERIFICACAO_MS = 30_000  # enquanto houver e-mails aguardando envio, confere de novo
+SEGUNDA_TENTATIVA_MS = 8_000  # ao voltar ao app o e-mail pode ainda estar na Caixa de Saída
 
 # Abas da Base de dados que também podem ser abertas diretamente (ex.: ir_para("fornecedores")).
 ABAS_BASE = {"controle", "fornecedores", "commodities", "projetos", "solicitantes", "feriados", "modelos"}
 
 
 class JanelaPrincipal(QMainWindow):
+    envios_confirmados = Signal(list)  # números das RFQs confirmadas pelo Outlook
+
     def __init__(self, base: BaseDados):
         super().__init__()
         self.base = base
@@ -122,7 +126,7 @@ class JanelaPrincipal(QMainWindow):
         self.statusBar().showMessage(f"Dados em {base.pasta}")
         QShortcut(QKeySequence("Ctrl+N"), self, activated=self.nova_solicitacao)
         QShortcut(QKeySequence("Ctrl+B"), self, activated=lambda: self.ir_para("base"))
-        QShortcut(QKeySequence("F5"), self, activated=self.atualizar_pagina)
+        QShortcut(QKeySequence("F5"), self, activated=self._f5)
         self.ir_para("painel")
 
         # E-mails abertos para revisão: confere nos Itens Enviados ao abrir o app e ao voltar para ele
@@ -131,7 +135,11 @@ class JanelaPrincipal(QMainWindow):
         aplicacao = QApplication.instance()
         if aplicacao is not None:
             aplicacao.applicationStateChanged.connect(self._estado_do_app)
-        QTimer.singleShot(1500, self.verificar_envios)
+        QTimer.singleShot(1500, self, self.verificar_envios)  # com contexto: cancelado se a janela sumir
+        self._repeticao = QTimer(self)
+        self._repeticao.setInterval(REPETIR_VERIFICACAO_MS)
+        self._repeticao.timeout.connect(lambda: self.verificar_envios(forcar=True))
+        self._repeticao.start()
 
     # ------------------------------------------------ navegação
     def _mudar_pagina(self, item: QListWidgetItem | None, _anterior=None) -> None:
@@ -187,6 +195,12 @@ class JanelaPrincipal(QMainWindow):
     def _estado_do_app(self, estado) -> None:
         if estado == Qt.ApplicationState.ApplicationActive:
             self.verificar_envios()
+            if pendentes_de_envio(self.base):
+                QTimer.singleShot(SEGUNDA_TENTATIVA_MS, self, lambda: self.verificar_envios(forcar=True))
+
+    def _f5(self) -> None:
+        self.verificar_envios(forcar=True)
+        self.atualizar_pagina()
 
     def verificar_envios(self, forcar: bool = False) -> list:
         """Passa para Enviada as RFQs aguardando envio cujo e-mail já está nos Itens Enviados."""
@@ -201,8 +215,10 @@ class JanelaPrincipal(QMainWindow):
             log.exception("Falha ao conferir os Itens Enviados do Outlook")
             return []
         if confirmadas:
-            self.mensagem("Envio confirmado no Outlook: " + ", ".join(r.numero for r in confirmadas))
+            numeros = [r.numero for r in confirmadas]
+            self.mensagem("Envio confirmado no Outlook: " + ", ".join(numeros))
             self.atualizar_pagina()
+            self.envios_confirmados.emit(numeros)
         return confirmadas
 
     def mensagem(self, texto: str) -> None:

@@ -99,3 +99,24 @@ def numero_por_idioma(valor: float | None, idioma: Idioma) -> str:
 def normalizar_nome(texto: str) -> str:
     """Chave para comparar nomes ignorando espaços extras e maiúsculas."""
     return re.sub(r"\s+", " ", (texto or "")).strip().casefold()
+
+
+def separar_valores(texto: str) -> list[str]:
+    """'A; B' → ['A', 'B'] (valores de uma coluna com várias opções)."""
+    return [v.strip() for v in re.split(r"[;\n]", texto or "") if v.strip()]
+
+
+def nomes_de_opcoes(texto: str, existentes: set[str]) -> list[str]:
+    """Nomes citados numa coluna de várias opções (ex.: commodities).
+
+    Separa por ';' (e quebra de linha); um valor com vírgula que não é o nome de uma opção existente
+    (``existentes``: nomes já normalizados) também é separado pela vírgula — 'A, B' vira A e B.
+    Importação, grade e migração usam esta mesma regra.
+    """
+    nomes: list[str] = []
+    for valor in separar_valores(texto):
+        if "," in valor and normalizar_nome(valor) not in existentes:
+            nomes += [parte.strip() for parte in valor.split(",") if parte.strip()]
+        else:
+            nomes.append(valor)
+    return nomes

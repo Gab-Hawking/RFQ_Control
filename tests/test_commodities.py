@@ -53,9 +53,18 @@ def test_grade_aceita_varias_commodities_e_recusa_desconhecida(commodities):
     assert salvo.commodity_ids == ["c2", "c1"]
     with pytest.raises(srv.ErroNegocio, match="Commodity não cadastrada: Pintura"):
         definicao.gravar_linha(commodities, {"commodities": "Ferramentaria; Pintura"}, fornecedor)
-    # a coluna calculada (e-mail do buyer) nunca é gravada
-    salvo = definicao.gravar_linha(commodities, {"email_buyer": "x@y.com"}, salvo)
+    # a coluna calculada (e-mail do buyer) nunca chega à conversão nem muda a commodity
+    recebidas = []
+    original = definicao.de_linha
+    try:
+        definicao.de_linha = lambda base, linha, existente: recebidas.append(dict(linha)) or original(base, linha, existente)
+        salvo = definicao.gravar_linha(commodities, {"email_buyer": "x@y.com", "idioma": "Inglês"}, salvo)
+    finally:
+        definicao.de_linha = original
+    assert recebidas == [{"idioma": "Inglês"}]
     assert salvo.commodity_ids == ["c2", "c1"]
+    assert commodities.commodities.obter("c1").email == "bia@op.com"
+    assert commodities.commodities.obter("c2").email == "caio@op.com"
 
 
 def test_aba_commodities(commodities):
@@ -116,3 +125,72 @@ def test_arquivo_de_fornecedores_antigo_continua_valido(base, pasta_dados):
                                "contatos": [{"nome": "Ana", "email": "ana@velho.com", "copia": False}]}]}
     (pasta_dados / "fornecedores.json").write_text(json.dumps(conteudo), encoding="utf-8")
     assert BaseDados.abrir(pasta_dados).fornecedores.obter("x").commodity_ids == []
+
+
+# ---------------------------------------------------------------- correções da revisão
+
+
+def test_importacao_com_virgula_usa_as_commodities_existentes(commodities, tmp_path):
+    caminho = tmp_path / "f.csv"
+    caminho.write_text("Fornecedor;E-mail (Para);Commodity\nAcme;a@acme.com;Ferramentaria, Dispositivos\n",
+                       encoding="utf-8")
+    resultado = abas.importar_arquivo(commodities, abas.ABA_FORNECEDORES, caminho)
+    assert resultado.criados == 1 and resultado.opcoes_criadas == []
+    acme = next(f for f in commodities.fornecedores if f.nome == "Acme")
+    assert acme.commodity_ids == ["c1", "c2"]
+
+
+def test_duas_colunas_de_commodity_no_arquivo(commodities, tmp_path):
+    caminho = tmp_path / "f.csv"
+    caminho.write_text("Fornecedor;E-mail (Para);Commodity;Categoria\nBeta;b@beta.com;Ferramentaria;Pintura\n",
+                       encoding="utf-8")
+    resultado = abas.importar_arquivo(commodities, abas.ABA_FORNECEDORES, caminho)
+    assert resultado.erros == [] and resultado.opcoes_criadas == ["Pintura"]
+    beta = next(f for f in commodities.fornecedores if f.nome == "Beta")
+    assert commodities.nomes_commodities(beta.commodity_ids) == "Ferramentaria, Pintura"
+
+
+def test_nome_de_commodity_nao_aceita_ponto_e_virgula(base):
+    with pytest.raises(srv.ErroNegocio, match="não pode ter ';'"):
+        abas.ABA_COMMODITIES.gravar_linha(base, {"nome": "Usinagem; Solda"}, None)
+    with pytest.raises(ValueError):
+        Commodity(nome="Usinagem\nSolda")
+
+
+def test_migracao_nao_separa_barra_e_faz_backup(base, pasta_dados):
+    base.fornecedores.salvar(Fornecedor(id="a", nome="Antigo", categoria="Usinagem/Solda"))
+    reaberta = BaseDados.abrir(pasta_dados)
+    assert [c.nome for c in reaberta.commodities] == ["Usinagem/Solda"]
+    assert any(p.name.startswith("antes_migracao_commodities") for p in reaberta.pasta_backup.iterdir())
+
+
+def test_buyers_por_pacote_e_commodity_sem_repetir(commodities, pacote_exemplo):
+    from rfq_control.servicos.email_rfq import emails_commodity_buyer, montar_email_agradecimento
+
+    com_c2 = pacote_exemplo.model_copy(update={"id": "pa", "commodity_id": "c2"})
+    sem = pacote_exemplo.model_copy(update={"id": "pb"})
+    outro_c2 = pacote_exemplo.model_copy(update={"id": "pc", "commodity_id": "c2"})
+    fornecedor = commodities.fornecedores.obter("f1")  # commodities c1 e c2
+    # pacote sem commodity leva os buyers do fornecedor; o com commodity, só o dela
+    assert emails_commodity_buyer(commodities, fornecedor, [com_c2, sem]) == ["caio@op.com", "bia@op.com"]
+    pacotes = []
+    for pacote in (com_c2, outro_c2):
+        p, [rfq] = srv.criar_pacote_com_rfqs(commodities, pacote, ["f1"])
+        pacotes.append(srv.registrar_envio(commodities, rfq, rfq.idioma, "enviada"))
+    email = montar_email_agradecimento(commodities, fornecedor, pacotes, fornecedor.idioma, "texto")
+    assert commodities.nomes_commodities(["c2", "c2"]) == "Dispositivos"
+    assert email.copia.count("caio@op.com") == 1
+
+
+def test_feriados_nacionais_mesmo_com_feriado_local_no_ano(base):
+    from rfq_control.modelos import Feriado
+
+    base.feriados.salvar(Feriado(data=date(2032, 1, 25), descricao="Aniversário da cidade"))
+    base._completar_feriados(hoje=date(2032, 1, 3))
+    datas = base.datas_feriados()
+    assert date(2032, 4, 21) in datas and date(2032, 12, 25) in datas and date(2032, 1, 25) in datas
+    # um nacional apagado de propósito não volta
+    natal = next(f for f in base.feriados if f.data == date(2032, 12, 25))
+    base.feriados.remover(natal.id)
+    base._completar_feriados(hoje=date(2032, 1, 3))
+    assert date(2032, 12, 25) not in base.datas_feriados()

@@ -24,7 +24,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import shutil
 import time
 from collections.abc import Iterable
@@ -48,7 +47,7 @@ from .modelos import (
 )
 from .padroes import CORPOS_PADRAO_ANTIGOS, modelos_email_padrao
 from .servicos.dias_uteis import feriados_nacionais_brasil
-from .servicos.formatos import normalizar_nome
+from .servicos.formatos import nomes_de_opcoes, normalizar_nome
 
 log = logging.getLogger(__name__)
 
@@ -299,16 +298,19 @@ class BaseDados:
             self.modelos_email.salvar_varios(alterados)
 
     def _completar_feriados(self, hoje: date | None = None) -> None:
-        """Gera os feriados nacionais do ano atual e do próximo, se o ano ainda não tiver nenhum.
+        """Gera os feriados nacionais do ano atual e do próximo, se o ano ainda não tiver os nacionais.
 
-        Evita que os prazos de um ano novo ignorem os feriados (bug B08 da planilha antiga).
+        Evita que os prazos de um ano novo ignorem os feriados (bug B08 da planilha antiga). Um feriado
+        local já cadastrado não conta; um nacional apagado de propósito não volta (o ano já foi gerado).
         """
         ano = (hoje or date.today()).year
-        anos_com_feriado = {f.data.year for f in self.feriados}
+        datas = self.datas_feriados()
         novos = [
             Feriado(data=dia, descricao=nome)
-            for a in (ano, ano + 1) if a not in anos_com_feriado
+            for a in (ano, ano + 1)
+            if not any(dia in datas for dia, _ in feriados_nacionais_brasil(a))
             for dia, nome in feriados_nacionais_brasil(a)
+            if dia not in datas
         ]
         if novos:
             self.feriados.salvar_varios(novos)
@@ -318,12 +320,14 @@ class BaseDados:
         pendentes = [f for f in self.fornecedores if f.categoria.strip()]
         if not pendentes:
             return
+        self.backup(f"antes_migracao_commodities_{datetime.now():%Y-%m-%d_%H%M%S}")
         por_nome = {normalizar_nome(c.nome): c for c in self.commodities}
         novas: dict[str, Commodity] = {}
         fornecedores = []
         for fornecedor in pendentes:
             ids = list(fornecedor.commodity_ids)
-            for nome in re.split(r"[;,/]", fornecedor.categoria):
+            # mesma regra da importação: separa por ';' e por ',' (não por '/', ex.: "Usinagem/Solda")
+            for nome in nomes_de_opcoes(fornecedor.categoria, set(por_nome)):
                 chave = normalizar_nome(nome)
                 if not chave:
                     continue
@@ -393,7 +397,7 @@ class BaseDados:
     def nomes_commodities(self, ids: list[str] | str | None) -> str:
         if isinstance(ids, str):
             ids = [ids]
-        return ", ".join(c.nome for c in (self.commodities.obter(i) for i in ids or []) if c)
+        return ", ".join(c.nome for c in (self.commodities.obter(i) for i in dict.fromkeys(ids or [])) if c)
 
     def fornecedores_da_commodity(self, commodity_id: str) -> list[Fornecedor]:
         return [f for f in self.fornecedores if commodity_id in f.commodity_ids]

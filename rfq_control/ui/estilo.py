@@ -103,6 +103,37 @@ QLabel#dica {{
     font-size: 9pt;
 }}
 
+/* ---------- caixas de marcar e opções: indicador próprio (o texto branco não pode apagar a marca) ---------- */
+QCheckBox::indicator, QRadioButton::indicator {{
+    width: 14px;
+    height: 14px;
+    background: #ffffff;
+    border: 1px solid #5f636a;
+}}
+QCheckBox::indicator {{
+    border-radius: 3px;
+}}
+QRadioButton::indicator {{
+    border-radius: 8px;
+}}
+QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
+    border-color: {DESTAQUE};
+}}
+QCheckBox::indicator:checked {{
+    background: {DESTAQUE};
+    border-color: {DESTAQUE_ESCURO};
+    image: url("{marcado}");
+}}
+QRadioButton::indicator:checked {{
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+                                stop:0 #ffffff, stop:0.32 #ffffff, stop:0.42 {DESTAQUE}, stop:1 {DESTAQUE});
+    border-color: {DESTAQUE_ESCURO};
+}}
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+    background: #e2e2e2;
+    border-color: #a9a9a9;
+}}
+
 /* ---------- textos sobre superfícies claras (abas, grupos, cartões) ---------- */
 QTabWidget QLabel, QGroupBox QLabel, QFrame#cartao QLabel,
 QTabWidget QCheckBox, QGroupBox QCheckBox, QTabWidget QRadioButton, QGroupBox QRadioButton {{
@@ -458,6 +489,7 @@ def folha_de_estilo() -> str:
     return _FOLHA.format(
         seta_baixo=(recursos / "seta_baixo.png").as_posix(),
         seta_cima=(recursos / "seta_cima.png").as_posix(),
+        marcado=(recursos / "marcado.png").as_posix(),
         **{nome: valor for nome, valor in globals().items() if nome.isupper() and isinstance(valor, str)},
     )
 
@@ -465,16 +497,14 @@ def folha_de_estilo() -> str:
 class _BarraDeTituloEscura(QObject):
     """No Windows, pinta a barra de título de cada janela de cinza escuro (em vez de branco)."""
 
-    def __init__(self, pai=None):
-        super().__init__(pai)
-        self._feitas: set[int] = set()
+    PROPRIEDADE = "_rfqBarraEscura"
 
     def eventFilter(self, objeto, evento):  # noqa: N802 - API Qt
         if evento.type() == QEvent.Type.Show and isinstance(objeto, QWidget) and objeto.isWindow():
-            identificador = id(objeto)
-            if identificador not in self._feitas:
-                self._feitas.add(identificador)
-                objeto.destroyed.connect(lambda *_a, i=identificador: self._feitas.discard(i))
+            # a marca fica no próprio objeto Qt (o id() do wrapper Python é reaproveitado entre janelas)
+            hwnd = int(objeto.winId())
+            if objeto.property(self.PROPRIEDADE) != hwnd:
+                objeto.setProperty(self.PROPRIEDADE, hwnd)
                 barra_de_titulo_escura(objeto)
         return False
 

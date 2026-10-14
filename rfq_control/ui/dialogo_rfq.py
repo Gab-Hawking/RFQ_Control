@@ -141,6 +141,10 @@ class DialogoRFQ(QDialog):
             "Confirmar envio", self._confirmar_envio,
             dica="O e-mail já foi enviado: marca a RFQ como Enviada (o Outlook confirma sozinho pelos Itens Enviados)")
         acoes.addWidget(self.botao_confirmar)
+        self.botao_nao_enviado = botao(
+            "E-mail não enviado", self._nao_enviado,
+            dica="O rascunho do e-mail foi apagado ou não saiu: a RFQ volta para Rascunho")
+        acoes.addWidget(self.botao_nao_enviado)
         acoes.addWidget(botao("Selecionar como vencedora", self._vencedora))
         acoes.addStretch()
         acoes.addWidget(botao("Fechar", self.reject))
@@ -148,6 +152,12 @@ class DialogoRFQ(QDialog):
         layout.addLayout(acoes)
 
         self._carregar()
+        # envio confirmado pelo Outlook com esta tela aberta: mostra a situação nova
+        janela.envios_confirmados.connect(self._envios_confirmados)
+
+    def _envios_confirmados(self, numeros: list) -> None:
+        if self.rfq.numero in numeros and not self._tem_alteracoes():
+            self._carregar()
 
     # ------------------------------------------------ exibição
     def _carregar(self) -> None:
@@ -161,6 +171,9 @@ class DialogoRFQ(QDialog):
         situacao = rfq.situacao()
         cor = estilo.COR_SITUACAO.get(situacao, estilo.TINTA_SUAVE)
         self.etiqueta.setText(f"<span style='color:{cor}'>●</span> {situacao}")
+        # pílula clara: a bolinha colorida continua visível sobre o fundo cinza
+        self.etiqueta.setStyleSheet(
+            f"background:{estilo.SUPERFICIE}; color:{estilo.TINTA}; border-radius:11px; padding:3px 12px;")
 
         while self.info.count():
             item = self.info.takeAt(0)
@@ -195,6 +208,7 @@ class DialogoRFQ(QDialog):
         self.info.setColumnStretch(1, 1)
 
         self.botao_confirmar.setVisible(rfq.aguardando_envio())
+        self.botao_nao_enviado.setVisible(rfq.aguardando_envio())
         self.status.setCurrentIndex(self.status.findData(rfq.status))
         self.idioma.setCurrentIndex(self.idioma.findData(rfq.idioma))
         self.data_envio.definir(rfq.data_envio)
@@ -246,7 +260,8 @@ class DialogoRFQ(QDialog):
     def _gravar_se_alterado(self) -> bool:
         if not self._tem_alteracoes():
             return True
-        ok, rfq = executar(self, lambda: srv.salvar_rfq(self.base, self._dados_formulario()))
+        # só o que foi mudado no formulário é gravado sobre o registro atual (que pode ter mudado)
+        ok, rfq = executar(self, lambda: srv.salvar_rfq(self.base, self._dados_formulario(), carregada=self.rfq))
         if ok:
             self.rfq = rfq
             self.alterou = True
@@ -270,6 +285,14 @@ class DialogoRFQ(QDialog):
         if not self._gravar_se_alterado():
             return
         ok, _ = executar(self, lambda: srv.confirmar_envio(self.base, self.rfq, descricao="Envio confirmado manualmente"))
+        if ok:
+            self.alterou = True
+            self._carregar()
+
+    def _nao_enviado(self) -> None:
+        if not self._gravar_se_alterado():
+            return
+        ok, _ = executar(self, lambda: srv.alterar_status(self.base, [self.rfq.id], StatusRFQ.RASCUNHO))
         if ok:
             self.alterou = True
             self._carregar()

@@ -229,6 +229,14 @@ class ListaFornecedores(QWidget):
         return item
 
     def _visivel(self, item: QListWidgetItem, termos: list[str]) -> bool:
+        marcado = bool(item.flags() & Qt.ItemFlag.ItemIsUserCheckable) and item.checkState() == Qt.CheckState.Checked
+        if self.so_marcados.isChecked():
+            return marcado  # mostra todos os que vão receber, sejam de que commodity/idioma forem
+        alvo = sem_acentos(item.text())
+        if not all(t in alvo for t in termos):
+            return False
+        if marcado:
+            return True  # marcado nunca some pelos filtros: quem recebe a RFQ fica à vista
         commodity = self.commodity.currentData()
         ids = item.data(PAPEL_COMMODITIES) or []
         if commodity == SEM_COMMODITY and ids:
@@ -237,10 +245,7 @@ class ListaFornecedores(QWidget):
             return False
         if self.idioma.currentData() and item.data(PAPEL_IDIOMA) != self.idioma.currentData():
             return False
-        if self.so_marcados.isChecked() and item.checkState() != Qt.CheckState.Checked:
-            return False
-        alvo = sem_acentos(item.text())
-        return all(t in alvo for t in termos)
+        return True
 
     def _filtrar(self) -> None:
         termos = sem_acentos(self.busca.text()).split()
@@ -256,10 +261,7 @@ class ListaFornecedores(QWidget):
         )
 
     def _mudou(self) -> None:
-        if self.so_marcados.isChecked():
-            self._filtrar()
-        else:
-            self._atualizar_contador()
+        self._filtrar()  # desmarcar pode esconder o item; marcar o mantém visível
         self._ao_mudar()
 
     def _marcar_visiveis(self, marcar: bool, todos: bool = False) -> None:
@@ -274,7 +276,7 @@ class ListaFornecedores(QWidget):
     def _novo_fornecedor(self) -> None:
         from .dialogos_cadastro import DialogoFornecedor
 
-        dialogo = DialogoFornecedor(self.janela, pai=self)
+        dialogo = DialogoFornecedor(self.janela, pai=self.window())
         if dialogo.exec() == QDialog.DialogCode.Accepted and dialogo.resultado:
             self.carregar(marcar={dialogo.resultado.id})
 

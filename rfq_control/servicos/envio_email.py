@@ -2,10 +2,11 @@
 
 - **Revisão** (padrão, como a macro antiga): o e-mail abre como rascunho e a RFQ fica
   "Aguardando envio". Ela só passa a Enviada quando o e-mail aparece nos Itens Enviados do
-  Outlook (ou quando o usuário confirma o envio). Rascunho apagado sem enviar = RFQ em rascunho.
+  Outlook (ou quando o usuário confirma o envio). Se o rascunho for apagado, nada é registrado
+  como enviado; o usuário devolve a RFQ para rascunho (Alterar status → Rascunho).
 - **Envio direto**: o Outlook envia na hora e a RFQ é registrada como enviada.
-- **Cobrança**: responde ao e-mail original da RFQ (mesma conversa). Sem o original, sai um
-  e-mail "RE:" com a solicitação original citada abaixo.
+- **Cobrança**: responde ao e-mail original da RFQ (mesma conversa; o assunto tem de ser o do
+  e-mail da RFQ). Sem o original, sai um e-mail "RE:" com a solicitação original citada abaixo.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from ..armazenamento import BaseDados
-from ..modelos import RFQ, Idioma, MetodoEmail, TipoModelo
+from ..modelos import RFQ, Idioma, MetodoEmail, StatusRFQ, TipoModelo
 from .email_rfq import FONTE, EmailMontado, montar_email
 from .formatos import data_curta
 from .rfq import ErroNegocio, confirmar_envio, pendentes_de_envio, registrar_envio, registrar_revisao
@@ -207,11 +208,27 @@ def _eh_resposta(item: Any) -> bool:
     return bool(_PREFIXO_RESPOSTA.match(str(getattr(item, "Subject", "") or "")))
 
 
-def localizar_email_da_rfq(outlook: Any, numero: str) -> Any | None:
-    """O e-mail de RFQ enviado mais recente (não uma resposta ou encaminhamento)."""
-    encontrados = emails_enviados_com(outlook, numero)
-    originais = [item for _quando, item in encontrados if not _eh_resposta(item)]
-    return originais[0] if originais else None
+def _assunto_base(texto: str) -> str:
+    """Assunto sem os prefixos de resposta/encaminhamento, para comparar."""
+    texto = str(texto or "")
+    while _PREFIXO_RESPOSTA.match(texto):
+        texto = _PREFIXO_RESPOSTA.sub("", texto, count=1)
+    return re.sub(r"\s+", " ", texto).strip().casefold()
+
+
+def localizar_email_da_rfq(outlook: Any, numero: str, assunto: str = "") -> Any | None:
+    """O e-mail de RFQ enviado mais recente com o número no assunto (não uma resposta ou encaminhamento).
+
+    Com ``assunto`` (o do e-mail da RFQ), só vale o e-mail com esse mesmo assunto — assim a cobrança não
+    responde ao agradecimento ou a um lembrete antigo, que também levam o número da RFQ.
+    """
+    alvo = _assunto_base(assunto)
+    for _quando, item in emails_enviados_com(outlook, numero):
+        if _eh_resposta(item):
+            continue
+        if not alvo or _assunto_base(getattr(item, "Subject", "")) == alvo:
+            return item
+    return None
 
 
 def responder_no_outlook(original: Any, email: EmailMontado, enviar: bool = False) -> None:
@@ -308,7 +325,7 @@ def _cabecalho_citacao(original: EmailMontado, rfq: RFQ) -> str:
 
 def cobranca_com_original(base: BaseDados, rfq: RFQ, cobranca: EmailMontado) -> EmailMontado:
     """Cobrança como e-mail "RE:" com a solicitação original citada abaixo (quando não dá para responder)."""
-    original = montar_email(base, rfq, rfq.idioma, TipoModelo.RFQ)
+    original = montar_email(base, rfq, rfq.idioma, TipoModelo.RFQ, manter_prazo=True)
     assunto = rfq.assunto_email or original.assunto
     return replace(
         cobranca,
@@ -317,6 +334,16 @@ def cobranca_com_original(base: BaseDados, rfq: RFQ, cobranca: EmailMontado) -> 
         texto=cobranca.texto + "\n\n----- " + assunto + " -----\n\n" + original.texto,
         anexos=[],
     )
+
+
+def _assunto_da_rfq(base: BaseDados, rfq: RFQ) -> str:
+    """Assunto do e-mail da RFQ: o gravado no envio ou, nas RFQs antigas, o do modelo (mesmo da macro)."""
+    if rfq.assunto_email:
+        return rfq.assunto_email
+    try:
+        return montar_email(base, rfq, rfq.idioma, TipoModelo.RFQ, manter_prazo=True).assunto
+    except ErroNegocio:
+        return ""
 
 
 def _gerar_cobranca(
@@ -331,7 +358,7 @@ def _gerar_cobranca(
     if config.metodo_email == MetodoEmail.OUTLOOK and (abrir or enviar):
         original = None
         try:
-            original = localizar_email_da_rfq(_conectar_outlook(), rfq.numero)
+            original = localizar_email_da_rfq(_conectar_outlook(), rfq.numero, _assunto_da_rfq(base, rfq))
             if original is None:
                 aviso_busca = (f"O e-mail da {rfq.numero} não foi encontrado nos Itens Enviados do Outlook; a "
                                "cobrança foi aberta como e-mail novo (RE:) com a solicitação original abaixo.")
@@ -405,10 +432,13 @@ def gerar_email_rfq(
         )
     else:
         meio = "Outlook" if via_outlook else "arquivo .eml"
+        if rfq.status == StatusRFQ.RASCUNHO:
+            texto = (f"E-mail de RFQ aberto para revisão ({meio}) — {email.idioma.rotulo}. A RFQ passa a Enviada "
+                     "quando o e-mail aparecer nos Itens Enviados.")
+        else:
+            texto = f"E-mail de RFQ reaberto para revisão ({meio}, reenvio) — {email.idioma.rotulo}"
         rfq = registrar_revisao(
-            base, rfq, email.idioma,
-            f"E-mail de RFQ aberto para revisão ({meio}) — {email.idioma.rotulo}. A RFQ passa a Enviada quando "
-            "o e-mail aparecer nos Itens Enviados.",
+            base, rfq, email.idioma, texto,
             email.prazo, email.assunto, "" if via_outlook else message_id,
         )
     return ResultadoEmail(

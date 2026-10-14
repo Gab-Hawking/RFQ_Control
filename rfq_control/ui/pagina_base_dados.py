@@ -55,7 +55,7 @@ FILTRO_ARQUIVOS = "Planilhas e CSV (*.xlsx *.xlsm *.csv);;Planilhas Excel (*.xls
 
 
 def _salvar_como(janela, titulo: str, nome: str) -> Path | None:
-    caminho, _ = QFileDialog.getSaveFileName(janela, titulo, str(Path.home() / nome), "Planilha Excel (*.xlsx)")
+    caminho, _ = QFileDialog.getSaveFileName(janela.window(), titulo, str(Path.home() / nome), "Planilha Excel (*.xlsx)")
     return Path(caminho) if caminho else None
 
 
@@ -111,8 +111,7 @@ class AbaCadastro(QWidget):
         layout.addWidget(self.contador)
 
     def atualizar(self) -> None:
-        if not self.grade.modelo.pendentes():
-            self.grade.modelo.carregar()
+        self.grade.modelo.carregar(manter_pendentes=True)
         self._atualizar_contador()
 
     def pendentes(self) -> int:
@@ -146,7 +145,7 @@ class AbaCadastro(QWidget):
 
     def importar(self) -> None:
         caminho, _ = QFileDialog.getOpenFileName(
-            self, f"Importar {self.definicao.titulo}", str(Path.home()), FILTRO_ARQUIVOS
+            self.window(), f"Importar {self.definicao.titulo}", str(Path.home()), FILTRO_ARQUIVOS
         )
         if not caminho:
             return
