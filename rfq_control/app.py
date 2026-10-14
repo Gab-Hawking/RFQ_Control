@@ -110,6 +110,8 @@ def verificar_instalacao(app: QApplication) -> int:
         janela.ir_para(chave)
         app.processEvents()
     janela.close()
+    if sys.platform == "win32":
+        import win32com.client  # noqa: F401 - a automação do Outlook tem de estar no executável
     print(f"{NOME_APP} {__version__}: verificação concluída ({base.pasta})")
     return 0
 

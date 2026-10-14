@@ -92,7 +92,6 @@ def enviar_agradecimento(
         raise ErroNegocio("O envio automático usa o Outlook. Em Configurações, escolha abrir os e-mails via Outlook.")
     resultado = ResultadoDisparo()
     concluidas: list[str] = []
-    acao = "enviado" if enviar else "aberto para revisão"
     for fornecedor_id, rfqs in grupos.items():
         numeros = ", ".join(r.numero for r in rfqs)
         fornecedor = base.fornecedores.obter(fornecedor_id)
@@ -102,14 +101,13 @@ def enviar_agradecimento(
         idioma = rfqs[0].idioma
         try:
             email = montar_email_agradecimento(base, fornecedor, rfqs, idioma, texto_motivo(opcao, idioma, texto_livre))
-            _via, _arquivo, aviso = entregar(
-                base, email, f"agradecimento_{rfqs[0].numero}_{fornecedor.nome}", enviar, abrir
-            )
+            entrega = entregar(base, email, f"agradecimento_{rfqs[0].numero}_{fornecedor.nome}", enviar, abrir)
         except ErroNegocio as erro:
             resultado.itens.append(ItemDisparo(fornecedor.nome, numeros, idioma, False, str(erro)))
             continue
-        if aviso and aviso not in resultado.avisos:
-            resultado.avisos.append(aviso)
+        if entrega.aviso and entrega.aviso not in resultado.avisos:
+            resultado.avisos.append(entrega.aviso)
+        acao = "enviado" if entrega.enviado else "aberto para revisão"
         registradas = []
         for rfq in rfqs:
             copia = rfq.model_copy(deep=True)
@@ -117,7 +115,7 @@ def enviar_agradecimento(
             registradas.append(copia)
         base.rfqs.salvar_varios(registradas)
         concluidas += [r.id for r in rfqs]
-        resultado.itens.append(ItemDisparo(fornecedor.nome, numeros, idioma, True, acao))
+        resultado.itens.append(ItemDisparo(fornecedor.nome, numeros, idioma, True, acao, entrega.enviado))
     if novo_status and concluidas:
         novo_status = StatusRFQ(novo_status)
         if novo_status == StatusRFQ.NAO_SELECIONADA:

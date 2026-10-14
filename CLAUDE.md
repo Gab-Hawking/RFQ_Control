@@ -38,8 +38,9 @@ O CI (`.github/workflows/build.yml`) roda os testes no Linux e no Windows e publ
   validação ao carregar, backup diário em `dados/backup`.
 - `rfq_control/servicos/` — regras sem interface (testáveis): `rfq.py` (numeração, pacotes, status,
   envio/revisão/confirmação, indicadores), `email_rfq.py` (montagem e visual do e-mail, destinatários com
-  Commodity Buyer), `envio_email.py` (Outlook/.eml, revisão ou envio direto, busca nos Itens Enviados,
-  cobrança como resposta), `disparo.py` (escolher RFQ + fornecedores e enviar), `agradecimento.py`
+  Commodity Buyer), `envio_email.py` (Outlook/.eml, revisão ou envio direto — se o Outlook recusar o `Send()`, o e-mail
+  fica aberto e a RFQ segue como na revisão (`EnvioNaoAutomatico`); erros COM explicados em
+  `explicar_erro_outlook` —, busca nos Itens Enviados, cobrança como resposta), `disparo.py` (escolher RFQ + fornecedores e enviar), `agradecimento.py`
   (e-mail de agradecimento / status do projeto, um por fornecedor), `abas.py` (colunas das abas da Base de dados,
   conversão linha ↔ registro, importação em massa Excel/CSV, modelos), `importacao_legado.py` (aba Controle;
   linhas sem número viram RFQs novas), `leitor_xlsx.py` (streaming), `exportacao.py`, `cadastros.py`,

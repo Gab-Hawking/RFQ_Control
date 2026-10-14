@@ -218,6 +218,56 @@ def test_envio_direto_exige_outlook(base_populada, rfqs):
         envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE, enviar=True)
 
 
+def test_envio_direto_pelo_outlook_de_verdade(base_populada, rfqs, monkeypatch):
+    from outlook_falso import OutlookFalso
+
+    outlook = OutlookFalso()
+    monkeypatch.setattr(envio_email, "_conectar_outlook", lambda iniciar=True: outlook)
+    resultado = envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE, enviar=True)
+    [item] = outlook.criados
+    assert item.enviado_agora and not item.exibido and item.To == "joao@um.com"
+    assert resultado.enviado and resultado.rfq.status == StatusRFQ.ENVIADA
+
+
+def test_outlook_recusa_o_envio_direto_e_o_email_fica_aberto(base_populada, rfqs, monkeypatch):
+    from outlook_falso import OutlookFalso, erro_com
+
+    outlook = OutlookFalso(erro_envio=erro_com(-2147467260, "Operação anulada"))
+    monkeypatch.setattr(envio_email, "_conectar_outlook", lambda iniciar=True: outlook)
+    resultado = envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE, enviar=True)
+    [item] = outlook.criados
+    assert item.exibido and not item.enviado_agora and item.To == "joao@um.com"  # nada se perde
+    assert not resultado.enviado and resultado.via_outlook
+    assert "Operação anulada" in resultado.aviso and "bloqueou o envio" in resultado.aviso
+    assert "clique em Enviar" in resultado.aviso
+    rfq = base_populada.rfqs.obter(rfqs[0].id)
+    assert rfq.aguardando_envio()  # vira Enviada quando aparecer nos Itens Enviados, como na revisão
+    assert "não enviou automaticamente" in rfq.historico[-1].descricao
+
+
+def test_outlook_recusa_envio_e_exibicao_nada_e_registrado(base_populada, rfqs, monkeypatch):
+    from outlook_falso import OutlookFalso, erro_com
+
+    outlook = OutlookFalso(erro_envio=erro_com(-2147467260, "Operação anulada"), erro_exibir=RuntimeError("x"))
+    monkeypatch.setattr(envio_email, "_conectar_outlook", lambda iniciar=True: outlook)
+    with pytest.raises(srv.ErroNegocio, match="não enviou o e-mail: Operação anulada"):
+        envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE, enviar=True)
+    rfq = base_populada.rfqs.obter(rfqs[0].id)
+    assert rfq.status == StatusRFQ.RASCUNHO and not rfq.aguardando_envio()
+
+
+def test_explicar_erro_outlook():
+    from outlook_falso import ErroCOMFalso, erro_com
+
+    explicar = envio_email.explicar_erro_outlook
+    assert explicar(erro_com(-2147467260, "Operação anulada")).startswith("Operação anulada — o Outlook bloqueou")
+    nomes = "O Outlook não reconhece um ou mais nomes."
+    assert explicar(erro_com(-2147467259, nomes)) == nomes  # erro sem causa conhecida: o texto do Outlook
+    servidor = explicar(ErroCOMFalso(-2146959355, "Falha na execução do servidor", None, None))
+    assert servidor.startswith("Falha na execução do servidor — ") and "permissões diferentes" in servidor
+    assert explicar(RuntimeError("Outlook fechado")) == "Outlook fechado"
+
+
 # ---------------------------------------------------------------- visual, confirmação e cobrança em resposta
 
 
@@ -298,6 +348,24 @@ def test_cobranca_responde_ao_email_da_rfq(base_populada, rfqs, monkeypatch):
     assert resposta.Attachments == [] and resposta.Subject.startswith("RE: ")
     assert "como resposta ao e-mail da RFQ" in resultado.rfq.historico[-1].descricao
     assert base_populada.rfqs.obter(rfq.id).status == StatusRFQ.ENVIADA
+
+
+def test_cobranca_automatica_recusada_fica_aberta_como_resposta(base_populada, rfqs, monkeypatch):
+    from datetime import datetime
+
+    from outlook_falso import ItemFalso, OutlookFalso, erro_com
+
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda *_a, **_k: None)
+    rfq = envio_email.gerar_email_rfq(base_populada, rfqs[0].id, hoje=HOJE, enviar=True).rfq
+    recusa = erro_com(-2147467260, "Operação anulada")
+    original = ItemFalso(rfq.assunto_email, datetime(2026, 9, 30, 10), erro_envio=recusa)
+    monkeypatch.setattr(envio_email, "_conectar_outlook", lambda iniciar=True: OutlookFalso([original]))
+    resultado = envio_email.gerar_email_rfq(
+        base_populada, rfq.id, tipo=TipoModelo.COBRANCA, hoje=date(2026, 10, 8), enviar=True)
+    [resposta] = original.respostas
+    assert resposta.exibido and not resposta.enviado_agora
+    assert resultado.resposta and not resultado.enviado and "clique em Enviar" in resultado.aviso
+    assert "cobrança aberto para revisão" in resultado.rfq.historico[-1].descricao
 
 
 def test_cobranca_sem_email_original_vai_como_re_com_a_solicitacao(base_populada, rfqs, monkeypatch):
