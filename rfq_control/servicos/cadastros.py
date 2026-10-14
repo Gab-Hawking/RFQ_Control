@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..armazenamento import BaseDados, Colecao
-from ..modelos import Feriado, Fornecedor, Projeto, Solicitante, StatusRFQ
+from ..modelos import Commodity, Feriado, Fornecedor, Projeto, Solicitante, StatusRFQ
 from .dias_uteis import feriados_nacionais_brasil
 from .formatos import normalizar_nome
 from .rfq import ErroNegocio
@@ -18,16 +18,26 @@ def _nome_unico(colecao: Colecao, nome: str, identificador: str, tipo: str) -> N
 
 def salvar_fornecedor(base: BaseDados, fornecedor: Fornecedor) -> Fornecedor:
     _nome_unico(base.fornecedores, fornecedor.nome, fornecedor.id, "um fornecedor")
+    if any(base.commodities.obter(i) is None for i in fornecedor.commodity_ids):
+        raise ErroNegocio("Uma das commodities do fornecedor não existe mais. Revise a coluna Commodity.")
+    ids = list(dict.fromkeys(fornecedor.commodity_ids))  # sem repetidas, na ordem escolhida
+    if ids != fornecedor.commodity_ids:
+        fornecedor = fornecedor.model_copy(update={"commodity_ids": ids})
     salvo = base.fornecedores.salvar(fornecedor)
-    # RFQs ainda não enviadas acompanham o idioma do fornecedor
+    # RFQs ainda não enviadas acompanham o idioma do fornecedor (as com e-mail aberto já têm idioma)
     rascunhos = [
         r.model_copy(update={"idioma": salvo.idioma})
         for r in base.rfqs_do_fornecedor(salvo.id)
-        if r.status == StatusRFQ.RASCUNHO and r.idioma != salvo.idioma
+        if r.status == StatusRFQ.RASCUNHO and not r.aguardando_envio() and r.idioma != salvo.idioma
     ]
     if rascunhos:
         base.rfqs.salvar_varios(rascunhos)
     return salvo
+
+
+def salvar_commodity(base: BaseDados, commodity: Commodity) -> Commodity:
+    _nome_unico(base.commodities, commodity.nome, commodity.id, "uma commodity")
+    return base.commodities.salvar(commodity)
 
 
 def salvar_projeto(base: BaseDados, projeto: Projeto) -> Projeto:
@@ -52,7 +62,8 @@ def motivo_bloqueio_exclusao(base: BaseDados, registro) -> str | None:
     if isinstance(registro, Fornecedor):
         total = len(base.rfqs_do_fornecedor(registro.id))
         if total:
-            return f"O fornecedor '{registro.nome}' tem {total} RFQ(s). Desmarque 'Ativo' em vez de excluir."
+            return (f"O fornecedor '{registro.nome}' tem {total} RFQ(s) e não pode ser excluído. Para tirá-lo das "
+                    "listas de envio, desmarque 'Fornecedor ativo' em 'Detalhes do fornecedor…'.")
     elif isinstance(registro, Projeto):
         total = len(base.pacotes_do_projeto(registro.id))
         if total:
@@ -61,12 +72,19 @@ def motivo_bloqueio_exclusao(base: BaseDados, registro) -> str | None:
         total = len(base.pacotes_do_solicitante(registro.id))
         if total:
             return f"O solicitante '{registro.nome}' está em {total} pacote(s). Desmarque 'Ativo' em vez de excluir."
+    elif isinstance(registro, Commodity):
+        fornecedores = len(base.fornecedores_da_commodity(registro.id))
+        pacotes = len(base.pacotes_da_commodity(registro.id))
+        if fornecedores or pacotes:
+            return (f"A commodity '{registro.nome}' está em uso ({fornecedores} fornecedor(es), {pacotes} pacote(s)). "
+                    "Retire-a dos fornecedores e pacotes antes de excluir.")
     return None
 
 
 def colecao_de(base: BaseDados, registro) -> Colecao:
     mapa = {
         Fornecedor: base.fornecedores,
+        Commodity: base.commodities,
         Projeto: base.projetos,
         Solicitante: base.solicitantes,
         Feriado: base.feriados,

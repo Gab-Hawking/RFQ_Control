@@ -102,5 +102,5 @@ def test_base_antiga_recebe_modelos_que_faltam(base, pasta_dados):
 
     reaberta = BaseDados.abrir(pasta_dados)
     idiomas = {m.idioma.value for m in reaberta.modelos_email}
-    assert idiomas == {"PT", "ES", "EN"} and len(reaberta.modelos_email) == 6
+    assert idiomas == {"PT", "ES", "EN"} and len(reaberta.modelos_email) == 9  # RFQ, cobrança e agradecimento
     assert reaberta.modelos_email.obter(editado.id).assunto == "Assunto personalizado"

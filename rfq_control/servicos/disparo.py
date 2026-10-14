@@ -96,6 +96,7 @@ def disparar(
 
     Um fornecedor com problema (sem e-mail, Outlook recusou…) não interrompe os demais.
     """
+    tipo = TipoModelo(tipo)  # o Qt devolve o valor dos combos como texto
     pacote = base.pacotes.obter(pacote_id)
     if not pacote:
         raise ErroNegocio("Selecione a RFQ (pacote de cotação) que será enviada.")
@@ -134,5 +135,7 @@ def disparar(
         if enviado.aviso and enviado.aviso not in resultado.avisos:
             resultado.avisos.append(enviado.aviso)
         acao = "enviado" if enviar else "aberto para revisão"
+        if enviado.resposta:
+            acao += " (resposta ao e-mail da RFQ)"
         resultado.itens.append(ItemDisparo(fornecedor.nome, rfq.numero, enviado.email.idioma, True, acao))
     return resultado

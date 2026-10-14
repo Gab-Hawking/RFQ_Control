@@ -60,20 +60,26 @@ PAPEL_OBJETO = Qt.ItemDataRole.UserRole + 2
 # ---------------------------------------------------------------- mensagens
 
 
+def janela_de(pai: QWidget | None) -> QWidget | None:
+    """A janela do widget: diálogos abertos com ela como pai não herdam as cores de uma aba (texto escuro
+    sobre o fundo cinza do diálogo)."""
+    return pai.window() if pai is not None else None
+
+
 def informar(pai: QWidget | None, texto: str, titulo: str = "RFQ Control") -> None:
-    QMessageBox.information(pai, titulo, texto)
+    QMessageBox.information(janela_de(pai), titulo, texto)
 
 
 def avisar(pai: QWidget | None, texto: str, titulo: str = "Atenção") -> None:
-    QMessageBox.warning(pai, titulo, texto)
+    QMessageBox.warning(janela_de(pai), titulo, texto)
 
 
 def erro(pai: QWidget | None, texto: str, titulo: str = "Erro") -> None:
-    QMessageBox.critical(pai, titulo, texto)
+    QMessageBox.critical(janela_de(pai), titulo, texto)
 
 
 def confirmar(pai: QWidget | None, texto: str, titulo: str = "Confirmar", botao_sim: str = "Sim") -> bool:
-    caixa = QMessageBox(QMessageBox.Icon.Question, titulo, texto, parent=pai)
+    caixa = QMessageBox(QMessageBox.Icon.Question, titulo, texto, parent=janela_de(pai))
     sim = caixa.addButton(botao_sim, QMessageBox.ButtonRole.AcceptRole)
     caixa.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
     caixa.exec()
@@ -112,7 +118,7 @@ def mostrar_resultado(
     pasta_backup=None,
 ) -> None:
     """Janela de resultado (importação, envio de e-mails…) com resumo e lista de detalhes."""
-    dialogo = QDialog(pai)
+    dialogo = QDialog(janela_de(pai))
     dialogo.setWindowTitle(titulo)
     dialogo.resize(720, 520)
     layout = QVBoxLayout(dialogo)
@@ -290,10 +296,28 @@ class FiltroBusca(QSortFilterProxyModel):
             return str(a) < str(b)
 
 
+class DelegadoBase(QStyledItemDelegate):
+    """Célula sem o retângulo de foco (a linha selecionada já mostra onde se está).
+
+    Os editores criados para a célula recebem o nome ``editorCelula`` (moldura azul no tema).
+    """
+
+    def createEditor(self, pai, opcao, indice):  # noqa: N802
+        editor = super().createEditor(pai, opcao, indice)
+        if editor is not None:
+            editor.setObjectName("editorCelula")
+        return editor
+
+    def initStyleOption(self, opcao: QStyleOptionViewItem, indice: QModelIndex) -> None:  # noqa: N802
+        super().initStyleOption(opcao, indice)
+        opcao.state &= ~QStyle.StateFlag.State_HasFocus
+
+
 class Tabela(QTableView):
     """Tabela somente leitura com busca, ordenação e seleção de linhas."""
 
     ativada = Signal(object)
+    excluir = Signal()  # tecla Delete com linhas selecionadas (a página decide o que excluir)
 
     def __init__(self, colunas: list[Coluna], pai=None, selecao_multipla: bool = True):
         super().__init__(pai)
@@ -309,10 +333,11 @@ class Tabela(QTableView):
             if selecao_multipla else QAbstractItemView.SelectionMode.SingleSelection
         )
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setItemDelegate(DelegadoBase(self))
         self.setShowGrid(False)
         self.setWordWrap(False)
         self.verticalHeader().setVisible(False)
-        self.verticalHeader().setDefaultSectionSize(30)
+        self.verticalHeader().setDefaultSectionSize(32)
         cabecalho = self.horizontalHeader()
         cabecalho.setHighlightSections(False)
         cabecalho.setSectionsMovable(True)
@@ -357,10 +382,13 @@ class Tabela(QTableView):
         if evento.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.currentIndex().isValid():
             self.ativada.emit(self.currentIndex().data(PAPEL_OBJETO))
             return
+        if evento.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.selecionados():
+            self.excluir.emit()
+            return
         super().keyPressEvent(evento)
 
 
-class DelegadoSituacao(QStyledItemDelegate):
+class DelegadoSituacao(DelegadoBase):
     """Desenha a situação como etiqueta: bolinha colorida + texto em tinta."""
 
     def paint(self, pintor: QPainter, opcao: QStyleOptionViewItem, indice: QModelIndex) -> None:
@@ -393,7 +421,7 @@ class DelegadoSituacao(QStyledItemDelegate):
         pintor.restore()
 
 
-class DelegadoMedidor(QStyledItemDelegate):
+class DelegadoMedidor(DelegadoBase):
     """Percentual (0–1) como barra: preenchimento azul sobre trilho azul-claro."""
 
     def paint(self, pintor: QPainter, opcao: QStyleOptionViewItem, indice: QModelIndex) -> None:

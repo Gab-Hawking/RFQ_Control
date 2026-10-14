@@ -6,7 +6,7 @@ import re
 import shutil
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from ..armazenamento import BaseDados
@@ -16,6 +16,7 @@ from ..modelos import (
     Idioma,
     Pacote,
     StatusRFQ,
+    agora,
 )
 from .dias_uteis import dias_uteis_entre, somar_dias_uteis
 
@@ -54,6 +55,8 @@ def _validar_pacote(base: BaseDados, pacote: Pacote) -> Pacote:
         raise ErroNegocio("Selecione um projeto válido para o pacote.")
     if pacote.solicitante_id and not base.solicitantes.obter(pacote.solicitante_id):
         raise ErroNegocio("O solicitante selecionado não existe mais.")
+    if pacote.commodity_id and not base.commodities.obter(pacote.commodity_id):
+        raise ErroNegocio("A commodity selecionada não existe mais.")
     itens = [i for i in pacote.itens if not i.vazio()]
     if not itens:
         raise ErroNegocio("Inclua pelo menos um item no pacote.")
@@ -128,6 +131,7 @@ def duplicar_pacote(base: BaseDados, pacote_id: str) -> Pacote:
     copia = Pacote(
         titulo=f"{original.titulo} (cópia)",
         projeto_id=original.projeto_id,
+        commodity_id=original.commodity_id,
         solicitante_id=original.solicitante_id,
         prazo_dias_uteis=original.prazo_dias_uteis,
         observacoes=original.observacoes,
@@ -193,6 +197,32 @@ def caminhos_anexos(base: BaseDados, pacote: Pacote) -> list[Path]:
 # ---------------------------------------------------------------- RFQs
 
 
+def _marcar_enviada(
+    base: BaseDados, rfq: RFQ, quando: date, prazo: date | None = None, data_exata: bool = False
+) -> None:
+    """Rascunho → Enviada (ou completa uma Enviada sem data/prazo).
+
+    ``data_exata``: ``quando`` é a data real do envio (envio direto ou confirmado) e substitui uma data
+    antiga; sem ela, vale a data de envio já informada (ex.: digitada no diálogo). O prazo é o do e-mail
+    (``prazo`` ou o gravado na revisão) ou, sem ele, conta a partir da data de envio.
+    """
+    pacote = base.pacotes.obter(rfq.pacote_id)
+    if rfq.status == StatusRFQ.RASCUNHO:
+        rfq.status = StatusRFQ.ENVIADA
+        if data_exata or rfq.data_envio is None:
+            rfq.data_envio = quando
+        rfq.prazo = prazo or rfq.prazo or prazo_para(base, pacote, rfq.data_envio)
+    elif rfq.status == StatusRFQ.ENVIADA:
+        rfq.data_envio = rfq.data_envio or quando
+        rfq.prazo = rfq.prazo or prazo or prazo_para(base, pacote, rfq.data_envio)
+    rfq.aguardando_envio_desde = None
+
+
+def _atual(base: BaseDados, rfq: RFQ) -> RFQ:
+    """Cópia do registro gravado (não da cópia que a tela tinha, que pode estar desatualizada)."""
+    return (base.rfqs.obter(rfq.id) or rfq).model_copy(deep=True)
+
+
 def registrar_envio(
     base: BaseDados,
     rfq: RFQ,
@@ -200,44 +230,107 @@ def registrar_envio(
     descricao: str,
     hoje: date | None = None,
     prazo: date | None = None,
+    assunto: str = "",
 ) -> RFQ:
-    """Marca a RFQ como enviada e grava a data de envio e o prazo informado ao fornecedor."""
+    """Marca a RFQ como enviada em ``hoje`` e grava o prazo informado ao fornecedor.
+
+    Usado quando o envio é certo: envio direto pelo Outlook ou envio confirmado nos Itens Enviados.
+    """
     hoje = hoje or date.today()
-    rfq = rfq.model_copy(deep=True)
-    idioma = Idioma(idioma)
-    if rfq.status == StatusRFQ.RASCUNHO:
-        rfq.status = StatusRFQ.ENVIADA
-    if rfq.data_envio is None:
-        rfq.data_envio = hoje
-    if rfq.prazo is None:
-        rfq.prazo = prazo or prazo_para(base, base.pacotes.obter(rfq.pacote_id), hoje)
-    rfq.idioma = idioma
+    rfq = _atual(base, rfq)
+    _marcar_enviada(base, rfq, hoje, prazo, data_exata=True)
+    rfq.idioma = Idioma(idioma)
+    rfq.assunto_email = assunto or rfq.assunto_email
     rfq.registrar(descricao)
     return base.rfqs.salvar(rfq)
+
+
+def registrar_revisao(
+    base: BaseDados,
+    rfq: RFQ,
+    idioma: Idioma,
+    descricao: str,
+    prazo: date | None,
+    assunto: str = "",
+    message_id: str = "",
+    momento: datetime | None = None,
+) -> RFQ:
+    """E-mail aberto para revisão: a RFQ em rascunho fica "Aguardando envio" (não vira Enviada).
+
+    Ela passa a Enviada quando o envio é confirmado (Itens Enviados do Outlook ou pelo usuário); se o
+    e-mail não sair, o usuário a devolve para rascunho (Alterar status → Rascunho). O prazo escrito no
+    e-mail fica guardado e é o gravado quando o envio for confirmado.
+    """
+    rfq = _atual(base, rfq)
+    if rfq.status == StatusRFQ.RASCUNHO:
+        rfq.aguardando_envio_desde = momento or agora()
+        rfq.data_envio = None  # ainda não saiu: a data é a do envio confirmado
+        rfq.prazo = prazo
+        rfq.idioma = Idioma(idioma)
+        rfq.assunto_email = assunto or rfq.assunto_email
+        rfq.message_id = message_id or rfq.message_id
+    rfq.registrar(descricao)
+    return base.rfqs.salvar(rfq)
+
+
+def confirmar_envio(base: BaseDados, rfq: RFQ, enviado_em: date | None = None, descricao: str = "") -> RFQ:
+    """Confirma o envio de uma RFQ aguardando envio (o prazo é o que foi escrito no e-mail).
+
+    Se ela já não estiver aguardando (ex.: confirmada pelo Outlook enquanto a tela estava aberta),
+    não muda nada.
+    """
+    atual = base.rfqs.obter(rfq.id)
+    if atual is None or not atual.aguardando_envio():
+        return atual or rfq
+    quando = enviado_em or date.today()
+    texto = descricao or f"Envio confirmado em {quando:%d/%m/%Y}"
+    return registrar_envio(base, atual, atual.idioma, texto, quando)
+
+
+def pendentes_de_envio(base: BaseDados) -> list[RFQ]:
+    return [r for r in base.rfqs if r.aguardando_envio()]
 
 
 def alterar_status(
     base: BaseDados, rfq_ids: list[str], status: StatusRFQ, observacao: str = "", hoje: date | None = None
 ) -> list[RFQ]:
+    """Altera o status. Rascunho em uma RFQ "Aguardando envio" = o e-mail não saiu: volta a rascunho."""
     hoje = hoje or date.today()
     status = StatusRFQ(status)
     alteradas = []
     for rfq_id in rfq_ids:
         rfq = base.rfqs.obter(rfq_id)
-        if not rfq or rfq.status == status:
+        if not rfq:
+            continue
+        descartar_email = status == StatusRFQ.RASCUNHO and rfq.aguardando_envio()
+        if rfq.status == status and not descartar_email:
             continue
         rfq = rfq.model_copy(deep=True)
         anterior = rfq.status
-        rfq.status = status
-        if status in STATUS_COM_RESPOSTA and rfq.data_resposta is None:
-            rfq.data_resposta = hoje
-        if status == StatusRFQ.ENVIADA and rfq.data_envio is None:
-            rfq.data_envio = hoje
-            rfq.prazo = rfq.prazo or prazo_para(base, base.pacotes.obter(rfq.pacote_id), hoje)
-        texto = f"Status alterado de {anterior.value} para {status.value}"
+        _aplicar_status(base, rfq, status, hoje)
+        if descartar_email:
+            texto = "E-mail não enviado: a RFQ volta para rascunho"
+        else:
+            texto = f"Status alterado de {anterior.value} para {status.value}"
         rfq.registrar(f"{texto}: {observacao}" if observacao else texto)
         alteradas.append(rfq)
     return base.rfqs.salvar_varios(alteradas) if alteradas else []
+
+
+def _aplicar_status(base: BaseDados, rfq: RFQ, status: StatusRFQ, hoje: date) -> None:
+    anterior = rfq.status
+    aguardava = rfq.aguardando_envio()
+    if status == StatusRFQ.ENVIADA and anterior == StatusRFQ.RASCUNHO:
+        _marcar_enviada(base, rfq, hoje)
+    rfq.status = status
+    rfq.aguardando_envio_desde = None
+    if status == StatusRFQ.RASCUNHO and aguardava:
+        rfq.prazo = None  # era só o prazo do e-mail que não saiu
+    if status == StatusRFQ.ENVIADA:
+        rfq.data_envio = rfq.data_envio or hoje
+        rfq.prazo = rfq.prazo or prazo_para(base, base.pacotes.obter(rfq.pacote_id), rfq.data_envio)
+    if status in STATUS_COM_RESPOSTA and rfq.data_resposta is None:
+        rfq.data_resposta = hoje
 
 
 def selecionar_vencedora(base: BaseDados, rfq_id: str) -> list[RFQ]:
@@ -254,14 +347,30 @@ def selecionar_vencedora(base: BaseDados, rfq_id: str) -> list[RFQ]:
     return resultado
 
 
-def salvar_rfq(base: BaseDados, rfq: RFQ, descricao: str = "Dados da RFQ atualizados") -> RFQ:
+CAMPOS_EDITAVEIS = (
+    "status", "idioma", "data_envio", "prazo", "data_resposta", "valor_total", "moeda", "lead_time", "observacoes",
+)
+
+
+def salvar_rfq(
+    base: BaseDados, rfq: RFQ, descricao: str = "Dados da RFQ atualizados", carregada: RFQ | None = None
+) -> RFQ:
+    """Grava os dados editados de uma RFQ.
+
+    ``carregada``: a RFQ como estava quando o formulário foi aberto. Só o que o usuário mudou em relação a
+    ela é gravado sobre o registro atual — assim uma mudança feita nesse meio-tempo (ex.: envio confirmado
+    pelo Outlook) não é desfeita.
+    """
     atual = base.rfqs.obter(rfq.id)
     rfq = base.rfqs.validar(rfq)
+    if atual is not None and carregada is not None:
+        mudancas = {c: getattr(rfq, c) for c in CAMPOS_EDITAVEIS if getattr(rfq, c) != getattr(carregada, c)}
+        rfq = atual.model_copy(deep=True, update=mudancas)
     if atual and atual.status != rfq.status:
-        texto = f"Status alterado de {atual.status.value} para {rfq.status.value}"
-        rfq.registrar(texto)
-        if rfq.status in STATUS_COM_RESPOSTA and rfq.data_resposta is None:
-            rfq.data_resposta = date.today()
+        novo = rfq.status
+        rfq.status = atual.status
+        _aplicar_status(base, rfq, novo, date.today())
+        rfq.registrar(f"Status alterado de {atual.status.value} para {novo.value}")
     rfq.registrar(descricao)
     return base.rfqs.salvar(rfq)
 
@@ -272,7 +381,20 @@ def excluir_rfq(base: BaseDados, rfq_id: str) -> None:
         return
     if rfq.status != StatusRFQ.RASCUNHO:
         raise ErroNegocio("Só é possível excluir RFQs em rascunho. Para as demais, use o status 'Cancelada'.")
+    if rfq.aguardando_envio():
+        raise ErroNegocio(
+            f"O e-mail da {rfq.numero} já foi aberto para envio e pode ter saído. Se ele não foi enviado, "
+            "use 'Alterar status' → Rascunho antes de excluir."
+        )
     base.rfqs.remover(rfq_id)
+
+
+def pacotes_sem_rfq(base: BaseDados, pacote_ids: list[str]) -> list[Pacote]:
+    """Pacotes (entre os informados) que ficaram sem nenhuma RFQ — ex.: depois de excluir os rascunhos."""
+    return [
+        p for p in (base.pacotes.obter(i) for i in dict.fromkeys(pacote_ids))
+        if p and not base.rfqs_do_pacote(p.id)
+    ]
 
 
 # ---------------------------------------------------------------- indicadores

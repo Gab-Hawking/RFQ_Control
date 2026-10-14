@@ -10,19 +10,17 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from ..modelos import RFQ, SITUACAO_ATRASADA, Idioma, StatusRFQ, TipoModelo
+from ..modelos import RFQ, SITUACAO_AGUARDANDO, SITUACAO_ATRASADA, Idioma, StatusRFQ, TipoModelo
 from ..servicos.dias_uteis import dias_uteis_entre
 from ..servicos.exportacao import exportar_rfqs
 from ..servicos.envio_email import abrir_arquivo
 from ..servicos.formatos import numero_br
-from ..servicos.rfq import excluir_rfq
 from . import acoes
 from .componentes import (
     CaixaBusca,
     Coluna,
     DelegadoSituacao,
     Tabela,
-    avisar,
     botao,
     cabecalho_pagina,
     confirmar,
@@ -55,7 +53,8 @@ class PaginaRFQs(QWidget):
         filtros = QHBoxLayout()
         self.busca = CaixaBusca("Buscar número, fornecedor, projeto, cliente…")
         self.situacao = QComboBox()
-        self.situacao.addItems([FILTRO_TODAS, FILTRO_ABERTAS, SITUACAO_ATRASADA] + [s.value for s in StatusRFQ])
+        self.situacao.addItems(
+            [FILTRO_TODAS, FILTRO_ABERTAS, SITUACAO_ATRASADA, SITUACAO_AGUARDANDO] + [s.value for s in StatusRFQ])
         self.projeto = QComboBox()
         self.fornecedor = QComboBox()
         self.ano = QComboBox()
@@ -77,10 +76,15 @@ class PaginaRFQs(QWidget):
         botoes.addWidget(botao("Gerar e-mail", lambda: self._emails(None),
                                dica="E-mail das RFQs selecionadas, no idioma de cada fornecedor (Ctrl+E)"))
         botoes.addWidget(botao("Cobrança", lambda: self._emails(None, TipoModelo.COBRANCA),
-                               dica="E-mail lembrando o prazo às RFQs selecionadas"))
+                               dica="Responde ao e-mail da RFQ (mesma conversa) lembrando o prazo"))
+        botoes.addWidget(botao("Agradecimento / status…", self._agradecimento,
+                               dica="E-mail de agradecimento / situação do projeto (ex.: projeto declinado) para "
+                                    "todos os fornecedores das RFQs de um projeto"))
         botoes.addWidget(botao("Alterar status", self._status))
         botoes.addStretch()
-        botoes.addWidget(botao("Excluir rascunho", self._excluir, perigo=True))
+        botoes.addWidget(botao("Excluir", self._excluir, perigo=True,
+                               dica="Exclui as RFQs selecionadas (tecla Delete). Só rascunhos são excluídos; "
+                                    "as já enviadas podem ser marcadas como Cancelada"))
         botoes.addWidget(botao("Exportar para Excel", self._exportar))
         layout.addLayout(botoes)
 
@@ -104,6 +108,7 @@ class PaginaRFQs(QWidget):
         self.tabela = Tabela(colunas)
         self.tabela.setItemDelegateForColumn(1, DelegadoSituacao(self.tabela))
         self.tabela.ativada.connect(self._abrir_rfq)
+        self.tabela.excluir.connect(self._excluir)
         self.tabela.sortByColumn(0, Qt.SortOrder.DescendingOrder)
         self.busca.textChanged.connect(self._buscar)
         layout.addWidget(self.tabela, 1)
@@ -235,18 +240,17 @@ class PaginaRFQs(QWidget):
             self.atualizar(recarregar_filtros=False)
 
     def _excluir(self) -> None:
-        selecionadas = self.tabela.selecionados()
-        if not selecionadas:
-            avisar(self, "Selecione as RFQs em rascunho que deseja excluir.")
-            return
-        numeros = ", ".join(r.numero for r in selecionadas)
-        if not confirmar(self, f"Excluir {numeros}?", "Excluir", "Excluir"):
-            return
-        for rfq in selecionadas:
-            ok, _ = executar(self, lambda r=rfq: excluir_rfq(self.base, r.id))
-            if not ok:
-                break
-        self.atualizar(recarregar_filtros=False)
+        if acoes.excluir_rfqs(self.janela, self.tabela.selecionados()):
+            self.atualizar(recarregar_filtros=False)
+
+    def _agradecimento(self) -> None:
+        atual = self.tabela.atual()
+        projeto_id = self.projeto.currentData()
+        if not projeto_id and atual:
+            pacote = self._pacote_de(atual)
+            projeto_id = pacote.projeto_id if pacote else None
+        if acoes.agradecimento(self.janela, projeto_id):
+            self.atualizar(recarregar_filtros=False)
 
     def _exportar(self) -> None:
         sugestao = str(Path.home() / f"RFQs_{date.today():%Y-%m-%d}.xlsx")

@@ -132,7 +132,10 @@ erDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Rascunho
-    Rascunho --> Enviada: e-mail gerado/enviado (grava data e prazo)
+    Rascunho --> AguardandoEnvio: e-mail aberto para revisão (situação calculada)
+    AguardandoEnvio --> Enviada: e-mail nos Itens Enviados do Outlook ou confirmação do usuário (grava data e prazo)
+    AguardandoEnvio --> Rascunho: e-mail não enviado (rascunho apagado)
+    Rascunho --> Enviada: envio direto pelo Outlook ou status alterado à mão
     Enviada --> Atrasada: prazo vencido sem resposta (automático)
     Atrasada --> Enviada: cobrança enviada / prazo prorrogado
     Enviada --> Respondida: cotação registrada
@@ -231,7 +234,8 @@ A assinatura é incluída automaticamente (a padrão do Outlook, ou a configurad
 
 Correções já embutidas em relação à macro: saudação com o nome real do contato, Cc do fornecedor
 + comprador, planta correta, prazo formatado no idioma do e-mail e gravado na RFQ, parágrafos
-preservados, HTML válido, colunas de descrição/volume/capacidade incluídas quando preenchidas.
+preservados, HTML válido; colunas sem valor ficam de fora (menos o volume anual, que sempre aparece) e
+não há colunas de capacidade/cobertura para o fornecedor preencher (removidas na v0.3.0).
 
 ## 5. Requisitos não funcionais
 
@@ -270,6 +274,7 @@ RFQ_Control\
 └── dados\
     ├── configuracoes.json
     ├── fornecedores.json   (antiga aba CadastroContatos)
+    ├── commodities.json    (commodities e Commodity Buyer)
     ├── projetos.json       (antiga aba CadastroProjetos)
     ├── solicitantes.json
     ├── feriados.json       (antiga aba Feriados)
@@ -302,6 +307,7 @@ gravações são atômicas (arquivo temporário + substituição), então o arqu
 | **1 — Paridade** | Cadastros, lista de RFQs, pacote → N RFQs, e-mail PT/EN (Outlook/.eml), feriados, exportação Excel | ✅ v0.1.0 |
 | **2 — Acompanhamento** | Status, resposta (valor, moeda, lead time), atrasos automáticos, cobrança, painel | ✅ v0.1.0 (resposta no nível da RFQ) |
 | **2.5 — Base de dados e envio** | Tela com as antigas abas (edição tipo planilha), idioma Espanhol, cadastro em massa por Excel/CSV, RFQs novas a partir de planilha, envio de e-mails escolhendo RFQ e fornecedores (revisão ou envio automático) | ✅ v0.2.0 |
+| **2.6 — Commodities e comunicação** | Commodities com Commodity Buyer em cópia, cadastro de fornecedores simplificado (Para, Supplier Cc, commodities, idioma), envio confirmado pelos Itens Enviados do Outlook ("Aguardando envio"), cobrança como resposta ao e-mail da RFQ, e-mail de agradecimento / status do projeto, e-mail com tabelas redesenhadas, novo tema visual | ✅ v0.3.0 |
 | **3 — Análise** | Cotação por item (N02), comparativo lado a lado (N03), scorecard detalhado, volumes por ano (N11) | Próxima |
 | **4 — Integrações** | Leitura automática de respostas no Outlook (N13), lembretes automáticos | Futuro |
 

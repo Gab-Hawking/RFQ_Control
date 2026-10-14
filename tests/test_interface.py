@@ -6,8 +6,9 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QModelIndex, Qt  # noqa: E402
+from PySide6.QtCore import QModelIndex, QPoint, Qt  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from rfq_control.modelos import Idioma, MetodoEmail, StatusRFQ  # noqa: E402
@@ -57,9 +58,9 @@ def test_todas_as_paginas_abrem(janela, app, mensagens):
         base.abas.setCurrentIndex(indice)
         app.processEvents()
     assert [base.abas.tabText(i) for i in range(base.abas.count())] == [
-        "Controle", "Cadastro de Fornecedores", "Cadastro de Projetos", "Solicitantes", "Feriados",
-        "Corpo do E-mail",
+        "Controle", "Fornecedores", "Commodities", "Projetos", "Solicitantes", "Feriados", "Corpo do E-mail",
     ]
+    assert base.abas.tabPosition() == base.abas.TabPosition.North  # abas em cima, abaixo da descrição
     assert janela.ir_para("feriados") is base and base.abas.currentWidget() is base.feriados
     assert not [m for m in mensagens if m[0] == "critical"]
 
@@ -147,13 +148,16 @@ def test_gerar_email_pela_lista(janela, pacote_exemplo, monkeypatch, mensagens):
     _, rfqs = srv.criar_pacote_com_rfqs(base, pacote_exemplo, ["f1", "f2"])
     assert acoes.gerar_emails(janela, rfqs, Idioma.EN) == 2
     assert len(abertos) == 2 and all(p.suffix == ".eml" for p in abertos)
-    assert all(base.rfqs.obter(r.id).status == StatusRFQ.ENVIADA for r in rfqs)
+    # abertos para revisão: só viram Enviada quando o envio é confirmado
+    assert all(base.rfqs.obter(r.id).aguardando_envio() for r in rfqs)
 
     pagina = janela.ir_para("rfqs")
-    pagina.filtrar_situacao("Em aberto")
+    pagina.filtrar_situacao("Aguardando envio")
     assert len(pagina.tabela.visiveis()) == 2
-    pagina.filtrar_situacao(StatusRFQ.RASCUNHO.value)
-    assert pagina.tabela.visiveis() == []
+    srv.alterar_status(base, [rfqs[0].id], StatusRFQ.ENVIADA)
+    pagina.atualizar()
+    pagina.filtrar_situacao("Em aberto")
+    assert [r.id for r in pagina.tabela.visiveis()] == [rfqs[0].id]
 
 
 def test_email_de_fornecedor_sem_contato_avisa(janela, pacote_exemplo, mensagens):
@@ -183,8 +187,10 @@ def test_pre_visualizacao_do_modelo(base):
     from rfq_control.ui.pagina_modelos import pre_visualizar_html
 
     for modelo in base.modelos_email:
-        html = pre_visualizar_html(modelo, "Empresa Exemplo", True)
-        assert "{{" not in html and "<table" in html
+        html = pre_visualizar_html(modelo, "Empresa Exemplo")
+        assert "{{" not in html
+        if modelo.tipo.name == "RFQ":
+            assert "<table" in html
 
 
 # ---------------------------------------------------------------- Base de dados
@@ -265,6 +271,82 @@ def test_aba_controle_mostra_uma_linha_por_item(janela, pacote_exemplo):
     assert len(base.controle.tabela.visiveis()) == 4  # 2 RFQs x 2 itens
 
 
+def test_delete_com_linha_inteira_exclui_na_grade(janela, app, monkeypatch):
+    from rfq_control.ui import pagina_base_dados
+
+    perguntas = []
+    monkeypatch.setattr(pagina_base_dados, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    janela.show()
+    janela.activateWindow()
+    base = janela.ir_para("fornecedores")
+    base.fornecedores.busca.setFocus()
+    grade = base.fornecedores.grade
+    linha = _indice(grade, next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "f3"), "nome").row()
+    cabecalho = grade.verticalHeader()  # clique no número da linha: seleciona a linha inteira e dá o foco à grade
+    meio = cabecalho.sectionViewportPosition(linha) + cabecalho.sectionSize(linha) // 2
+    QTest.mouseClick(cabecalho.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(10, meio))
+    app.processEvents()
+    assert app.focusWidget() is grade and grade.linhas_inteiras()
+    QTest.keyClick(grade, Qt.Key.Key_Delete)
+    assert perguntas == ["Excluir 1 linha(s)?"]
+    assert janela.base.fornecedores.obter("f3") is None
+    assert all(l.id != "f3" for l in grade.modelo.linhas)
+
+
+def test_delete_em_celula_so_limpa_a_celula(janela, monkeypatch):
+    from rfq_control.ui import pagina_base_dados
+
+    monkeypatch.setattr(pagina_base_dados, "confirmar", lambda *a, **k: pytest.fail("não deveria excluir"))
+    base = janela.ir_para("fornecedores")
+    grade = base.fornecedores.grade
+    linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "f1")
+    grade.setFocus()
+    grade.setCurrentIndex(_indice(grade, linha, "email_cc"))
+    QTest.keyClick(grade, Qt.Key.Key_Delete)
+    fornecedor = janela.base.fornecedores.obter("f1")
+    assert fornecedor is not None and not [c for c in fornecedor.contatos if c.copia]
+
+
+def test_delete_na_aba_controle_exclui_a_rfq(janela, pacote_exemplo, monkeypatch):
+    from rfq_control.ui import acoes
+
+    _, rfqs = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1", "f2"])
+    perguntas = []
+    monkeypatch.setattr(acoes, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    base = janela.ir_para("controle")
+    tabela = base.controle.tabela
+    linha = next(r for r in range(tabela.filtro.rowCount())
+                 if tabela.filtro.index(r, 0).data() == rfqs[0].numero)
+    tabela.setFocus()
+    tabela.selectRow(linha)
+    QTest.keyClick(tabela, Qt.Key.Key_Delete)
+    assert perguntas[0].startswith(f"Excluir {rfqs[0].numero}?") and "todas as linhas" in perguntas[0]
+    assert janela.base.rfqs.obter(rfqs[0].id) is None and janela.base.rfqs.obter(rfqs[1].id) is not None
+    assert len(tabela.visiveis()) == 2  # as 2 linhas de item da RFQ excluída saíram
+
+
+def test_delete_na_lista_de_rfqs(janela, pacote_exemplo, monkeypatch, mensagens):
+    from rfq_control.ui import acoes
+
+    _, rfqs = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1", "f2", "f3"])
+    rascunho, enviada, aguardando = rfqs
+    srv.registrar_envio(janela.base, enviada, Idioma.PT, "enviada")
+    srv.registrar_revisao(janela.base, aguardando, Idioma.PT, "aberta para revisão", None)
+    perguntas = []
+    monkeypatch.setattr(acoes, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    pagina = janela.ir_para("rfqs")
+    pagina.tabela.setFocus()
+    pagina.tabela.selectAll()
+    QTest.keyClick(pagina.tabela, Qt.Key.Key_Delete)
+    assert perguntas[0] == f"Excluir {rascunho.numero}?"
+    assert "Marcar como Cancelada" in perguntas[1] and enviada.numero in perguntas[1]
+    assert any(aguardando.numero in texto for _tipo, texto in mensagens)
+    assert janela.base.rfqs.obter(rascunho.id) is None
+    assert janela.base.rfqs.obter(enviada.id).status == StatusRFQ.CANCELADA  # o número fica guardado
+    assert janela.base.rfqs.obter(aguardando.id).aguardando_envio()
+    assert len(pagina.tabela.visiveis()) == 2
+
+
 # ---------------------------------------------------------------- envio de e-mails
 
 
@@ -286,5 +368,272 @@ def test_dialogo_de_envio(janela, pacote_exemplo, monkeypatch, mensagens):
     assert dialogo.resultado and len(dialogo.resultado.enviados) == 2
     assert [enviar for _e, enviar in usados] == [False, False]
     assert {r.fornecedor_id for r in janela.base.rfqs_do_pacote(pacote.id)} == {"f1", "f2"}
-    assert all(r.status == StatusRFQ.ENVIADA for r in janela.base.rfqs_do_pacote(pacote.id))
+    assert all(r.situacao() == "Aguardando envio" for r in janela.base.rfqs_do_pacote(pacote.id))
     assert usados[1][0].idioma == Idioma.EN  # idioma do fornecedor f2
+
+
+# ---------------------------------------------------------------- commodities, filtros, agradecimento
+
+
+@pytest.fixture
+def com_commodities(janela):
+    from rfq_control.modelos import Commodity
+    from rfq_control.servicos import cadastros
+
+    base = janela.base
+    base.commodities.salvar_varios([
+        Commodity(id="c1", nome="Ferramentaria", comprador="Bia", email="bia@op.com"),
+        Commodity(id="c2", nome="Dispositivos", comprador="Caio", email="caio@op.com"),
+    ])
+    cadastros.salvar_fornecedor(base, base.fornecedores.obter("f1").model_copy(update={"commodity_ids": ["c1"]}))
+    cadastros.salvar_fornecedor(base, base.fornecedores.obter("f2").model_copy(update={"commodity_ids": ["c2"]}))
+    return janela
+
+
+def test_grade_de_fornecedores_com_commodity(com_commodities, app):
+    from rfq_control.ui.grade import EditorMultiplo
+
+    pagina = com_commodities.ir_para("fornecedores")
+    grade = pagina.fornecedores.grade
+    titulos = [c.titulo for c in grade.definicao.colunas]
+    assert titulos == ["Fornecedor", "E-mail (Para)", "E-mails Supplier (Cc)", "Commodity",
+                       "E-mail Commodity Buyer (Cc)", "Idioma"]
+    linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "f3")
+    buyer = _indice(grade, linha, "email_buyer")
+    assert not grade.model().flags(buyer) & Qt.ItemFlag.ItemIsEditable  # coluna calculada
+
+    indice = _indice(grade, linha, "commodities")
+    grade.setCurrentIndex(indice)
+    grade.edit(indice)
+    app.processEvents()
+    editor = grade.indexWidget(indice) or next(
+        w for w in grade.viewport().findChildren(EditorMultiplo) if w.isVisible())
+    assert [editor.item(i).text() for i in range(editor.count())] == ["Dispositivos", "Ferramentaria"]
+    editor._alternar(editor.item(0))
+    editor._alternar(editor.item(1))
+    grade.itemDelegate().setModelData(editor, grade.model(), indice)
+    assert com_commodities.base.fornecedores.obter("f3").commodity_ids == ["c2", "c1"]
+    assert grade.modelo.linhas[linha].valores["email_buyer"] == "caio@op.com; bia@op.com"
+
+
+def test_nova_solicitacao_filtra_por_commodity(com_commodities, app):
+    from rfq_control.ui.dialogo_pacote import DialogoPacote
+
+    dialogo = DialogoPacote(com_commodities)
+    lista = dialogo.fornecedores
+
+    def visiveis():
+        return [lista.lista.item(i).data(Qt.ItemDataRole.UserRole)
+                for i in range(lista.lista.count()) if not lista.lista.item(i).isHidden()]
+
+    assert visiveis() == ["f1", "f3", "f2"]
+    dialogo.commodity.setCurrentIndex(dialogo.commodity.findData("c2"))  # commodity do pacote filtra a lista
+    assert visiveis() == ["f2"]
+    lista.commodity.setCurrentIndex(lista.commodity.findData("__sem__"))
+    assert visiveis() == ["f3"]
+    lista.commodity.setCurrentIndex(0)
+    lista.idioma.setCurrentIndex(lista.idioma.findData("EN"))
+    assert visiveis() == ["f2"]
+    lista.idioma.setCurrentIndex(0)
+    lista._marcar_visiveis(True)
+    lista.so_marcados.setChecked(True)
+    assert visiveis() == ["f1", "f3", "f2"] and len(lista.selecionados()) == 3
+    lista._marcar_visiveis(False, todos=True)
+    assert visiveis() == [] and "0 marcado" in lista.contador.text()
+
+    dialogo.projeto.setCurrentIndex(dialogo.projeto.findData("prj1"))
+    dialogo.tabela_itens.item(0, 0).setText("PEÇA 1")
+    lista.so_marcados.setChecked(False)
+    for i in range(lista.lista.count()):
+        if lista.lista.item(i).data(Qt.ItemDataRole.UserRole) == "f2":
+            lista.lista.item(i).setCheckState(Qt.CheckState.Checked)
+    dialogo._salvar()
+    assert com_commodities.base.pacotes.obter(dialogo.original.id).commodity_id == "c2"
+
+
+def test_excluir_rascunhos_oferece_excluir_pacote_vazio(janela, pacote_exemplo, monkeypatch):
+    from rfq_control.ui import acoes
+
+    pacote, rfqs = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1", "f2"])
+    pagina = janela.ir_para("rfqs")
+    pagina.tabela.selectAll()
+    perguntas = []
+    monkeypatch.setattr(acoes, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    pagina._excluir()
+    assert len(perguntas) == 2 and pacote.titulo in perguntas[1]
+    assert not len(janela.base.rfqs) and janela.base.pacotes.obter(pacote.id) is None
+
+
+def test_agradecimento_pelo_dialogo(com_commodities, pacote_exemplo, monkeypatch, mensagens):
+    from rfq_control.ui import dialogo_agradecimento
+    from rfq_control.ui.dialogo_agradecimento import DialogoAgradecimento
+
+    base = com_commodities.base
+    _, rfqs = srv.criar_pacote_com_rfqs(base, pacote_exemplo, ["f1", "f2"])
+    for rfq in rfqs:
+        srv.registrar_envio(base, rfq, base.fornecedores.obter(rfq.fornecedor_id).idioma, "enviada")
+    abertos = []
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda email, enviar=False: abertos.append(email))
+    monkeypatch.setattr(dialogo_agradecimento, "mostrar_resultado", lambda *a, **k: None)
+    dialogo = DialogoAgradecimento(com_commodities, "prj1")
+    assert dialogo.tabela.rowCount() == 2 and len(dialogo.rfq_ids()) == 2
+    assert dialogo.novo_status.currentData() == StatusRFQ.CANCELADA.value  # sugerido para "declinado"
+    assert dialogo.botao_enviar.text() == "Abrir 2 e-mail(s)"
+    dialogo._enviar()
+    assert len(abertos) == 2 and "foi declinado" in abertos[0].html
+    assert "bia@op.com" in abertos[0].copia  # Commodity Buyer em cópia
+    assert all(base.rfqs.obter(r.id).status == StatusRFQ.CANCELADA for r in rfqs)
+    assert not [m for m in mensagens if m[0] == "critical"]
+
+
+def test_janela_confirma_envio_pelos_itens_enviados(janela, pacote_exemplo, monkeypatch):
+    from datetime import timedelta
+
+    from outlook_falso import ItemFalso, OutlookFalso
+
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda *_a, **_k: None)
+    _, [rfq] = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1"])
+    rfq = envio_email.gerar_email_rfq(janela.base, rfq.id).rfq
+    outlook = OutlookFalso([ItemFalso(rfq.assunto_email, rfq.aguardando_envio_desde + timedelta(minutes=1))])
+    conexoes = []
+    monkeypatch.setattr(envio_email, "_conectar_outlook", lambda iniciar=True: conexoes.append(iniciar) or outlook)
+    [confirmada] = janela.verificar_envios(forcar=True)
+    assert conexoes == [False]  # a conferência automática só usa um Outlook já aberto
+    assert confirmada.status == StatusRFQ.ENVIADA
+    assert "Envio confirmado" in janela.statusBar().currentMessage()
+    assert janela.verificar_envios(forcar=True) == []  # nada pendente: nem consulta o Outlook
+    assert conexoes == [False]
+
+
+# ---------------------------------------------------------------- correções da revisão
+
+
+def test_detalhes_do_fornecedor_nao_perde_telefone(janela, mensagens):
+    from rfq_control.modelos import Contato
+    from rfq_control.ui.dialogos_cadastro import DialogoFornecedor
+
+    base = janela.base
+    fornecedor = base.fornecedores.obter("f1").model_copy(update={"contatos": [
+        Contato(nome="João Compras", telefone="(11) 4000-1234"),
+        Contato(telefone="(11) 9999-0000"),
+        Contato(nome="Ana", email="ana@um.com", telefone="(11) 5555-0000"),
+    ]})
+    base.fornecedores.salvar(fornecedor)
+    dialogo = DialogoFornecedor(janela, base.fornecedores.obter("f1"))
+    dialogo.contatos.item(2, 1).setText("ana@um.com.br")  # corrigir o e-mail não apaga o telefone
+    dialogo._salvar()
+    assert [(c.nome, c.email, c.telefone) for c in base.fornecedores.obter("f1").contatos] == [
+        ("João Compras", "", "(11) 4000-1234"), ("", "", "(11) 9999-0000"), ("Ana", "ana@um.com.br", "(11) 5555-0000"),
+    ]
+
+
+def test_editor_de_commodity_distingue_acentos(app):
+    from rfq_control.ui.grade import EditorMultiplo
+
+    editor = EditorMultiplo(("Fundicao", "Fundição"))
+    editor.definir(["Fundição"])
+    assert editor.valores() == ["Fundição"]
+
+
+def test_envio_nao_pre_marca_rfq_aguardando_envio(janela, pacote_exemplo, monkeypatch):
+    from rfq_control.ui.dialogo_envio import DialogoEnvio
+
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda *_a, **_k: None)
+    pacote, [um, dois] = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1", "f2"])
+    envio_email.gerar_email_rfq(janela.base, um.id)  # f1: e-mail já aberto
+    dialogo = DialogoEnvio(janela, pacote.id)
+    assert [d.fornecedor_id for d in dialogo.destinatarios()] == ["f2"]
+
+
+def test_colar_pula_a_coluna_calculada(janela, app):
+    pagina = janela.ir_para("fornecedores")
+    grade = pagina.fornecedores.grade
+    grade.setCurrentIndex(QModelIndex())
+    # linha no formato da planilha de 'Baixar modelo' (só colunas editáveis)
+    grade.colar("Proveedor Uno\tventas@uno.com\t\t\tEspanhol\n")
+    uno = next(f for f in janela.base.fornecedores if f.nome == "Proveedor Uno")
+    assert uno.idioma == Idioma.ES and uno.emails_para() == ["ventas@uno.com"]
+
+
+def test_grade_com_linha_pendente_atualiza_as_outras(com_commodities, app):
+    from rfq_control.servicos import cadastros
+
+    pagina = com_commodities.ir_para("fornecedores")
+    pagina.fornecedores.nova_linha()
+    grade = pagina.fornecedores.grade
+    grade.model().setData(_indice(grade, len(grade.modelo.linhas) - 1, "email_para"), "so@email.com")
+    assert len(grade.modelo.pendentes()) == 1
+    commodity = com_commodities.base.commodities.obter("c1")
+    cadastros.salvar_commodity(com_commodities.base, commodity.model_copy(update={"nome": "Ferramentaria e Moldes"}))
+    pagina.atualizar()
+    linha_um = next(l for l in grade.modelo.linhas if l.id == "f1")
+    assert linha_um.valores["commodities"] == "Ferramentaria e Moldes"
+    assert len(grade.modelo.pendentes()) == 1  # a linha pendente continua lá
+    grade.model().setData(_indice(grade, grade.modelo.linhas.index(linha_um), "email_cc"), "cc@um.com")
+    assert not linha_um.erro and "cc@um.com" in com_commodities.base.fornecedores.obter("f1").emails_copia()
+    pagina.descartar_pendentes()
+
+
+def test_fornecedor_marcado_nao_some_pelo_filtro(com_commodities, app):
+    from rfq_control.ui.dialogo_pacote import DialogoPacote
+
+    dialogo = DialogoPacote(com_commodities)
+    lista = dialogo.fornecedores
+    for i in range(lista.lista.count()):
+        if lista.lista.item(i).data(Qt.ItemDataRole.UserRole) == "f2":
+            lista.lista.item(i).setCheckState(Qt.CheckState.Checked)
+    dialogo.commodity.setCurrentIndex(dialogo.commodity.findData("c1"))
+    visiveis = [lista.lista.item(i).data(Qt.ItemDataRole.UserRole)
+                for i in range(lista.lista.count()) if not lista.lista.item(i).isHidden()]
+    assert visiveis == ["f1", "f2"]  # f2 é de outra commodity, mas está marcado e vai receber
+
+
+def test_agradecimento_nao_marca_a_vencedora(com_commodities, pacote_exemplo):
+    from rfq_control.ui.dialogo_agradecimento import DialogoAgradecimento
+
+    base = com_commodities.base
+    _, rfqs = srv.criar_pacote_com_rfqs(base, pacote_exemplo, ["f1", "f2"])
+    for rfq in rfqs:
+        srv.registrar_envio(base, rfq, base.fornecedores.obter(rfq.fornecedor_id).idioma, "enviada")
+    srv.alterar_status(base, [rfqs[0].id], StatusRFQ.SELECIONADA)
+    dialogo = DialogoAgradecimento(com_commodities, "prj1")
+    assert dialogo.rfq_ids() == [rfqs[1].id]
+
+
+def test_dialogo_da_rfq_volta_a_rascunho_e_acompanha_a_confirmacao(janela, pacote_exemplo, monkeypatch):
+    from rfq_control.ui.dialogo_rfq import DialogoRFQ
+
+    monkeypatch.setattr(envio_email, "abrir_no_outlook", lambda *_a, **_k: None)
+    _, [rfq] = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1"])
+    rfq = envio_email.gerar_email_rfq(janela.base, rfq.id).rfq
+    dialogo = DialogoRFQ(janela, rfq)
+    assert not dialogo.botao_nao_enviado.isHidden()
+    dialogo._nao_enviado()
+    assert dialogo.rfq.situacao() == "Rascunho" and dialogo.botao_nao_enviado.isHidden()
+    # e-mail reaberto e confirmado pelo Outlook com a tela aberta: a tela recarrega e salvar não desfaz
+    envio_email.gerar_email_rfq(janela.base, rfq.id)
+    dialogo._carregar()
+    srv.confirmar_envio(janela.base, rfq, None, "Envio confirmado nos Itens Enviados do Outlook")
+    janela.envios_confirmados.emit([rfq.numero])
+    assert dialogo.status.currentData() == StatusRFQ.ENVIADA
+    dialogo.lead_time.setText("8 semanas")
+    dialogo._salvar()
+    salva = janela.base.rfqs.obter(rfq.id)
+    assert salva.status == StatusRFQ.ENVIADA and salva.lead_time == "8 semanas"
+
+
+def test_conferencia_periodica_e_f5(janela, monkeypatch):
+    from rfq_control.ui import janela_principal
+
+    assert janela._repeticao.isActive() and janela._repeticao.interval() == janela_principal.REPETIR_VERIFICACAO_MS
+    chamadas = []
+    monkeypatch.setattr(janela, "verificar_envios", lambda forcar=False: chamadas.append(forcar) or [])
+    janela._f5()
+    assert chamadas == [True]
+
+
+def test_mensagens_abrem_na_janela_e_nao_na_aba(janela):
+    from rfq_control.ui.componentes import janela_de
+
+    aba = janela.ir_para("fornecedores").fornecedores
+    assert janela_de(aba) is janela and janela_de(None) is None

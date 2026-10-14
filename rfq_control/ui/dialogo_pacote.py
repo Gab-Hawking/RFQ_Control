@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -31,11 +32,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..modelos import RFQ, Fornecedor, Item, Pacote, StatusRFQ
+from ..modelos import RFQ, Fornecedor, Idioma, Item, Pacote, StatusRFQ
 from ..servicos import rfq as srv
 from ..servicos.envio_email import abrir_arquivo
 from ..servicos.formatos import ler_numero, numero_br
-from .componentes import CaixaBusca, CampoData, avisar, botao, confirmar, executar, sem_acentos
+from .componentes import CaixaBusca, CampoData, DelegadoBase, avisar, botao, confirmar, executar, sem_acentos
 
 if TYPE_CHECKING:
     from .janela_principal import JanelaPrincipal
@@ -60,7 +61,8 @@ class TabelaItens(QTableWidget):
         for indice, (_, _, largura) in enumerate(COLUNAS_ITENS):
             self.setColumnWidth(indice, largura)
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.verticalHeader().setDefaultSectionSize(28)
+        self.verticalHeader().setDefaultSectionSize(32)
+        self.setItemDelegate(DelegadoBase(self))
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setAlternatingRowColors(True)
 
@@ -131,25 +133,69 @@ class TabelaItens(QTableWidget):
         return itens
 
 
+PAPEL_COMMODITIES = Qt.ItemDataRole.UserRole + 1
+PAPEL_IDIOMA = Qt.ItemDataRole.UserRole + 2
+SEM_COMMODITY = "__sem__"
+
+
 class ListaFornecedores(QWidget):
-    """Lista de fornecedores com caixas de seleção e busca."""
+    """Lista de fornecedores com caixas de seleção, busca e filtros (commodity, idioma, só marcados)."""
 
     def __init__(self, janela: JanelaPrincipal, ja_incluidos: set[str], ao_mudar, pai=None):
         super().__init__(pai)
         self.janela = janela
         self.ja_incluidos = ja_incluidos
+        self._ao_mudar = ao_mudar
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        barra = QHBoxLayout()
-        self.busca = CaixaBusca("Buscar fornecedor ou categoria…")
-        self.busca.textChanged.connect(self._filtrar)
-        barra.addWidget(self.busca)
-        barra.addWidget(botao("+ Novo fornecedor", self._novo_fornecedor))
-        layout.addLayout(barra)
+        filtros = QHBoxLayout()
+        self.busca = CaixaBusca("Buscar fornecedor, e-mail ou commodity…")
+        self.busca.textChanged.connect(lambda _t: self._filtrar())
+        self.commodity = QComboBox()
+        self.commodity.setMinimumWidth(190)
+        self.commodity.setToolTip("Mostrar só os fornecedores desta commodity")
+        self.idioma = QComboBox()
+        self.idioma.addItem("Todos os idiomas", None)
+        for idioma in Idioma:
+            self.idioma.addItem(idioma.rotulo, idioma.value)
+        self.so_marcados = QCheckBox("Só marcados")
+        for combo in (self.commodity, self.idioma):
+            combo.currentIndexChanged.connect(lambda _i: self._filtrar())
+        self.so_marcados.toggled.connect(lambda _v: self._filtrar())
+        filtros.addWidget(self.busca, 1)
+        filtros.addWidget(self.commodity)
+        filtros.addWidget(self.idioma)
+        filtros.addWidget(self.so_marcados)
+        layout.addLayout(filtros)
+        acoes = QHBoxLayout()
+        acoes.addWidget(botao("Marcar visíveis", lambda: self._marcar_visiveis(True)))
+        acoes.addWidget(botao("Desmarcar todos", lambda: self._marcar_visiveis(False, todos=True)))
+        acoes.addWidget(botao("+ Novo fornecedor", self._novo_fornecedor))
+        acoes.addStretch()
+        self.contador = QLabel()
+        self.contador.setObjectName("dica")
+        acoes.addWidget(self.contador)
+        layout.addLayout(acoes)
         self.lista = QListWidget()
-        self.lista.itemChanged.connect(lambda _: ao_mudar())
+        self.lista.itemChanged.connect(lambda _: self._mudou())
         layout.addWidget(self.lista, 1)
+        self._carregar_commodities()
         self.carregar()
+
+    def _carregar_commodities(self) -> None:
+        atual = self.commodity.currentData()
+        self.commodity.blockSignals(True)
+        self.commodity.clear()
+        self.commodity.addItem("Todas as commodities", None)
+        for commodity in sorted(self.janela.base.commodities, key=lambda c: c.nome.casefold()):
+            self.commodity.addItem(commodity.nome, commodity.id)
+        self.commodity.addItem("Sem commodity", SEM_COMMODITY)
+        self.commodity.setCurrentIndex(max(0, self.commodity.findData(atual)))
+        self.commodity.blockSignals(False)
+
+    def filtrar_commodity(self, commodity_id: str | None) -> None:
+        """Usado pela commodity do pacote: mostra os fornecedores dela (o usuário pode trocar o filtro)."""
+        self.commodity.setCurrentIndex(max(0, self.commodity.findData(commodity_id)))
 
     def carregar(self, marcar: set[str] | None = None) -> None:
         marcados = set(self.selecionados()) | (marcar or set())
@@ -162,14 +208,16 @@ class ListaFornecedores(QWidget):
         for fornecedor in fornecedores:
             self.lista.addItem(self._criar_item(fornecedor, fornecedor.id in marcados))
         self.lista.blockSignals(False)
-        self._filtrar(self.busca.text())
+        self._filtrar()
 
     def _criar_item(self, fornecedor: Fornecedor, marcado: bool) -> QListWidgetItem:
         emails = fornecedor.emails_para()
         detalhe = emails[0] if emails else "⚠ sem e-mail cadastrado"
-        extra = f" · {fornecedor.categoria}" if fornecedor.categoria else ""
-        item = QListWidgetItem(f"{fornecedor.nome}   —   {fornecedor.idioma.value} · {detalhe}{extra}")
+        commodities = self.janela.base.nomes_commodities(fornecedor.commodity_ids) or "sem commodity"
+        item = QListWidgetItem(f"{fornecedor.nome}   ·   {commodities}   ·   {fornecedor.idioma.value}   ·   {detalhe}")
         item.setData(Qt.ItemDataRole.UserRole, fornecedor.id)
+        item.setData(PAPEL_COMMODITIES, list(fornecedor.commodity_ids))
+        item.setData(PAPEL_IDIOMA, fornecedor.idioma.value)
         if fornecedor.id in self.ja_incluidos:
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             item.setText(item.text() + "   (já incluído)")
@@ -180,17 +228,55 @@ class ListaFornecedores(QWidget):
             item.setToolTip("Cadastre um e-mail (Para) antes de gerar o e-mail desta RFQ.")
         return item
 
-    def _filtrar(self, texto: str) -> None:
-        termos = sem_acentos(texto).split()
+    def _visivel(self, item: QListWidgetItem, termos: list[str]) -> bool:
+        marcado = bool(item.flags() & Qt.ItemFlag.ItemIsUserCheckable) and item.checkState() == Qt.CheckState.Checked
+        if self.so_marcados.isChecked():
+            return marcado  # mostra todos os que vão receber, sejam de que commodity/idioma forem
+        alvo = sem_acentos(item.text())
+        if not all(t in alvo for t in termos):
+            return False
+        if marcado:
+            return True  # marcado nunca some pelos filtros: quem recebe a RFQ fica à vista
+        commodity = self.commodity.currentData()
+        ids = item.data(PAPEL_COMMODITIES) or []
+        if commodity == SEM_COMMODITY and ids:
+            return False
+        if commodity not in (None, SEM_COMMODITY) and commodity not in ids:
+            return False
+        if self.idioma.currentData() and item.data(PAPEL_IDIOMA) != self.idioma.currentData():
+            return False
+        return True
+
+    def _filtrar(self) -> None:
+        termos = sem_acentos(self.busca.text()).split()
         for linha in range(self.lista.count()):
             item = self.lista.item(linha)
-            alvo = sem_acentos(item.text())
-            item.setHidden(not all(t in alvo for t in termos))
+            item.setHidden(not self._visivel(item, termos))
+        self._atualizar_contador()
+
+    def _atualizar_contador(self) -> None:
+        visiveis = sum(1 for i in range(self.lista.count()) if not self.lista.item(i).isHidden())
+        self.contador.setText(
+            f"{visiveis} de {self.lista.count()} fornecedor(es) · {len(self.selecionados())} marcado(s)"
+        )
+
+    def _mudou(self) -> None:
+        self._filtrar()  # desmarcar pode esconder o item; marcar o mantém visível
+        self._ao_mudar()
+
+    def _marcar_visiveis(self, marcar: bool, todos: bool = False) -> None:
+        self.lista.blockSignals(True)
+        for linha in range(self.lista.count()):
+            item = self.lista.item(linha)
+            if item.flags() & Qt.ItemFlag.ItemIsUserCheckable and (todos or not item.isHidden()):
+                item.setCheckState(Qt.CheckState.Checked if marcar else Qt.CheckState.Unchecked)
+        self.lista.blockSignals(False)
+        self._mudou()
 
     def _novo_fornecedor(self) -> None:
         from .dialogos_cadastro import DialogoFornecedor
 
-        dialogo = DialogoFornecedor(self.janela, pai=self)
+        dialogo = DialogoFornecedor(self.janela, pai=self.window())
         if dialogo.exec() == QDialog.DialogCode.Accepted and dialogo.resultado:
             self.carregar(marcar={dialogo.resultado.id})
 
@@ -256,6 +342,16 @@ class DialogoPacote(QDialog):
         self.prazo.setSuffix(" dias úteis")
         self.prazo.setValue(pacote.prazo_dias_uteis if pacote else self.base.configuracoes.prazo_dias_uteis)
         self.prazo.setToolTip("Prazo de resposta contado a partir do envio do e-mail")
+        self.commodity = QComboBox()
+        self.commodity.addItem("—", None)
+        for commodity in sorted(self.base.commodities, key=lambda c: c.nome.casefold()):
+            texto = commodity.nome + (f"  (buyer: {commodity.comprador})" if commodity.comprador else "")
+            self.commodity.addItem(texto, commodity.id)
+        if pacote:
+            self.commodity.setCurrentIndex(max(0, self.commodity.findData(pacote.commodity_id)))
+        self.commodity.setToolTip(
+            "Commodity do pacote: filtra os fornecedores e coloca o Commodity Buyer em cópia nos e-mails"
+        )
 
         grade.addWidget(QLabel("Projeto *"), 0, 0)
         grade.addLayout(linha_projeto, 0, 1)
@@ -267,6 +363,8 @@ class DialogoPacote(QDialog):
         grade.addWidget(self.titulo, 2, 1)
         grade.addWidget(QLabel("Data"), 2, 2)
         grade.addWidget(self.data, 2, 3)
+        grade.addWidget(QLabel("Commodity"), 3, 0)
+        grade.addWidget(self.commodity, 3, 1)
         grade.addWidget(QLabel("Prazo de resposta"), 3, 2)
         grade.addWidget(self.prazo, 3, 3)
         grade.setColumnStretch(1, 1)
@@ -322,6 +420,9 @@ class DialogoPacote(QDialog):
         explicacao.setWordWrap(True)
         fornecedores_layout.addWidget(explicacao)
         self.fornecedores = ListaFornecedores(janela, ja_incluidos, self._atualizar_botao)
+        self.fornecedores.filtrar_commodity(self.commodity.currentData())
+        self.commodity.currentIndexChanged.connect(
+            lambda _i: self.fornecedores.filtrar_commodity(self.commodity.currentData()))
         fornecedores_layout.addWidget(self.fornecedores, 1)
         self.abas.addTab(aba_fornecedores, "Fornecedores")
 
@@ -461,6 +562,7 @@ class DialogoPacote(QDialog):
         dados = {
             "titulo": self.titulo.text().strip(),
             "projeto_id": projeto_id,
+            "commodity_id": self.commodity.currentData(),
             "solicitante_id": self.solicitante.currentData(),
             "data": self.data.valor() or date.today(),
             "prazo_dias_uteis": self.prazo.value(),

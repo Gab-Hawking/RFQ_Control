@@ -20,10 +20,10 @@ def _csv(tmp_path, texto: str, codificacao: str = "utf-8-sig"):
 def test_importar_fornecedores_csv_com_idioma(base, tmp_path):
     caminho = _csv(
         tmp_path,
-        "Fornecedor;Responsável;E-mail (Para);E-mail (Cc);Idioma;Ativo\n"
-        "Alfa Ltda;Carla;carla@alfa.com;compras@alfa.com;Espanhol;Sim\n"
+        "Fornecedor;Responsável;E-mail (Para);E-mails Supplier (Cc);Idioma;Telefone\n"
+        "Alfa Ltda;Carla;carla@alfa.com;compras@alfa.com;Espanhol;11 9999\n"
         "Beta SA;;vendas@beta.com, outro@beta.com;;Inglês;\n"
-        "Gama;Rui;rui(arroba)gama;;Português;Sim\n",
+        "Gama;Rui;rui(arroba)gama;;Português;\n",
         "cp1252",
     )
     resultado = abas.importar_arquivo(base, abas.ABA_FORNECEDORES, caminho)
@@ -33,7 +33,8 @@ def test_importar_fornecedores_csv_com_idioma(base, tmp_path):
     assert resultado.pasta_backup and resultado.pasta_backup.exists()
     fornecedores = {f.nome: f for f in base.fornecedores}
     assert fornecedores["Alfa Ltda"].idioma == Idioma.ES
-    assert fornecedores["Alfa Ltda"].nome_contato() == "Carla"
+    assert fornecedores["Alfa Ltda"].nome_contato() == ""  # colunas Responsável e Telefone saíram do cadastro
+    assert resultado.colunas_ignoradas == ["Responsável", "Telefone"]
     assert fornecedores["Alfa Ltda"].emails_copia() == ["compras@alfa.com"]
     assert fornecedores["Beta SA"].idioma == Idioma.EN
     assert fornecedores["Beta SA"].emails_para() == ["vendas@beta.com", "outro@beta.com"]
@@ -47,12 +48,14 @@ def test_importacao_atualiza_pelo_nome_sem_perder_contatos(base, tmp_path):
             Contato(nome="Diretor", email="diretor@alfa.com", copia=True),
         ],
     ))
-    caminho = _csv(tmp_path, "FORNECEDOR,Idioma,Categoria\n  alfa   ltda ,Español,Ferramentaria\n")
+    caminho = _csv(tmp_path, "FORNECEDOR,Idioma,Categoria\n  alfa   ltda ,Español,Ferramentaria; Moldes\n")
     resultado = abas.importar_arquivo(base, abas.ABA_FORNECEDORES, caminho)
 
     assert (resultado.criados, resultado.atualizados) == (0, 1)
+    assert resultado.opcoes_criadas == ["Ferramentaria", "Moldes"]  # commodities novas criadas na importação
     [fornecedor] = base.fornecedores.todos()
-    assert fornecedor.idioma == Idioma.ES and fornecedor.categoria == "Ferramentaria"
+    assert fornecedor.idioma == Idioma.ES
+    assert base.nomes_commodities(fornecedor.commodity_ids) == "Ferramentaria, Moldes"
     # colunas de contato ausentes no arquivo: contatos mantidos
     assert [(c.nome, c.email, c.telefone) for c in fornecedor.contatos] == [
         ("Carla", "carla@alfa.com", "11 9999-0000"), ("Diretor", "diretor@alfa.com", ""),
@@ -70,7 +73,7 @@ def test_cabecalhos_da_planilha_antiga(base, tmp_path):
 
     resultado = abas.importar_arquivo(base, abas.ABA_FORNECEDORES, caminho)
     assert resultado.criados == 1
-    assert resultado.colunas_ignoradas == ["Coluna1"]
+    assert resultado.colunas_ignoradas == ["RESPONSÁVEL", "Coluna1"]
     [delta] = base.fornecedores.todos()
     assert delta.nome_contato() == ""  # "fornecedor" não é nome de pessoa
     assert delta.emails_copia() == ["b@delta.com", "comprador@empresa.com"]
@@ -80,12 +83,15 @@ def test_modelo_exportacao_e_reimportacao(base, tmp_path):
     modelo = abas.gerar_modelo(abas.ABA_FORNECEDORES, tmp_path / "modelo.xlsx")
     livro = load_workbook(modelo)
     planilha = livro[abas.ABA_FORNECEDORES.titulo]
-    assert [c.value for c in planilha[1]] == [c.titulo for c in abas.ABA_FORNECEDORES.colunas]
+    # o modelo não traz a coluna calculada (e-mail do Commodity Buyer)
+    assert [c.value for c in planilha[1]] == [
+        "Fornecedor", "E-mail (Para)", "E-mails Supplier (Cc)", "Commodity", "Idioma",
+    ]
     validacoes = [v.formula1 for v in planilha.data_validations.dataValidation]
     assert '"Português,Espanhol,Inglês"' in validacoes
     assert "Instruções" in livro.sheetnames
 
-    planilha.append(["Épsilon", "Ana", "ana@epsilon.com", "", "Inglês", "Fixadores", "", "Sim", ""])
+    planilha.append(["Épsilon", "ana@epsilon.com", "", "Fixadores", "Inglês"])
     livro.save(modelo)
     assert abas.importar_arquivo(base, abas.ABA_FORNECEDORES, modelo).criados == 1
 
@@ -137,7 +143,7 @@ def test_linha_da_grade(base):
     zeta = definicao.gravar_linha(base, linha, None)
     assert zeta.idioma == Idioma.ES and zeta.ativo  # 'Ativo' vazio = Sim
     with pytest.raises(ErroNegocio, match="idioma inválido"):
-        definicao.gravar_linha(base, {**definicao.para_linha(zeta), "idioma": "Alemão"}, zeta)
+        definicao.gravar_linha(base, {**definicao.para_linha(base, zeta), "idioma": "Alemão"}, zeta)
     with pytest.raises(ErroNegocio, match="Já existe um fornecedor"):
         definicao.gravar_linha(base, {**definicao.linha_vazia(), "nome": "ZETA"}, None)
 

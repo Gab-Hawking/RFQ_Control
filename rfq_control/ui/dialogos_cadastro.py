@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -16,6 +17,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QSpinBox,
     QTableWidget,
@@ -25,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from ..modelos import Contato, Fornecedor, Idioma, Projeto
 from ..servicos import cadastros
-from .componentes import avisar, botao, executar
+from .componentes import DelegadoBase, avisar, botao, executar
 from .formularios import Campo, DialogoFormulario
 
 if TYPE_CHECKING:
@@ -41,10 +44,10 @@ class DialogoFornecedor(QDialog):
         self.janela = janela
         self.original = fornecedor
         self.resultado: Fornecedor | None = None
-        self.setWindowTitle("Editar fornecedor" if fornecedor else "Novo fornecedor")
-        self.resize(760, 560)
+        self.setWindowTitle("Detalhes do fornecedor" if fornecedor else "Novo fornecedor")
+        self.resize(760, 620)
         fornecedor = fornecedor or Fornecedor.model_construct(
-            nome="", idioma=Idioma.PT, categoria="", observacoes="", ativo=True, contatos=[]
+            nome="", idioma=Idioma.PT, commodity_ids=[], categoria="", observacoes="", ativo=True, contatos=[]
         )
 
         layout = QVBoxLayout(self)
@@ -55,39 +58,49 @@ class DialogoFornecedor(QDialog):
             self.idioma.addItem(idioma.rotulo, idioma)
         self.idioma.setCurrentIndex(self.idioma.findData(fornecedor.idioma))
         self.idioma.setToolTip("Idioma padrão dos e-mails de RFQ para este fornecedor")
-        self.categoria = QComboBox()
-        self.categoria.setEditable(True)
-        categorias = sorted({f.categoria for f in janela.base.fornecedores if f.categoria})
-        self.categoria.addItems(categorias)
-        self.categoria.setCurrentText(fornecedor.categoria)
+        self.commodities = QListWidget()
+        self.commodities.setFixedHeight(104)
+        for commodity in sorted(janela.base.commodities, key=lambda c: c.nome.casefold()):
+            item = QListWidgetItem(commodity.nome + (f"   (buyer: {commodity.comprador})" if commodity.comprador else ""))
+            item.setData(Qt.ItemDataRole.UserRole, commodity.id)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+            marcado = commodity.id in fornecedor.commodity_ids
+            item.setCheckState(Qt.CheckState.Checked if marcado else Qt.CheckState.Unchecked)
+            self.commodities.addItem(item)
+        if not self.commodities.count():
+            vazio = QListWidgetItem("Nenhuma commodity cadastrada (Base de dados → Commodities)")
+            vazio.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.commodities.addItem(vazio)
         self.ativo = QCheckBox("Fornecedor ativo (aparece na seleção de novas RFQs)")
         self.ativo.setChecked(fornecedor.ativo)
         self.observacoes = QPlainTextEdit(fornecedor.observacoes)
         self.observacoes.setFixedHeight(60)
         formulario.addRow("Nome *", self.nome)
         formulario.addRow("Idioma dos e-mails", self.idioma)
-        formulario.addRow("Categoria", self.categoria)
+        formulario.addRow("Commodities", self.commodities)
         formulario.addRow("", self.ativo)
         formulario.addRow("Observações", self.observacoes)
         layout.addLayout(formulario)
 
         titulo = QLabel("Contatos")
         titulo.setObjectName("tituloSecao")
-        dica = QLabel("Destinatários (Para) recebem o e-mail; contatos em Cópia (Cc) são copiados. "
-                      "O nome do primeiro destinatário é usado na saudação.")
+        dica = QLabel("Destinatários (Para) recebem o e-mail com o escopo; os contatos Supplier (Cc) vão em "
+                      "cópia. O nome do primeiro destinatário é usado na saudação (\"Caro …\"). O Commodity Buyer "
+                      "vem da commodity e entra em cópia automaticamente.")
         dica.setObjectName("dica")
         dica.setWordWrap(True)
         layout.addWidget(titulo)
         layout.addWidget(dica)
-        self.contatos = QTableWidget(0, 4)
-        self.contatos.setHorizontalHeaderLabels(["Nome", "E-mail", "Tipo", "Telefone"])
+        self.contatos = QTableWidget(0, 3)
+        self.contatos.setHorizontalHeaderLabels(["Nome", "E-mail", "Tipo"])
         self.contatos.verticalHeader().setVisible(False)
+        self.contatos.verticalHeader().setDefaultSectionSize(34)
+        self.contatos.setItemDelegate(DelegadoBase(self.contatos))
         self.contatos.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         cabecalho = self.contatos.horizontalHeader()
         cabecalho.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.contatos.setColumnWidth(0, 180)
-        self.contatos.setColumnWidth(2, 110)
-        self.contatos.setColumnWidth(3, 130)
+        self.contatos.setColumnWidth(0, 200)
+        self.contatos.setColumnWidth(2, 170)
         for contato in fornecedor.contatos:
             self._adicionar_contato(contato)
         layout.addWidget(self.contatos, 1)
@@ -115,14 +128,16 @@ class DialogoFornecedor(QDialog):
     def _adicionar_contato(self, contato: Contato | None) -> None:
         linha = self.contatos.rowCount()
         self.contatos.insertRow(linha)
-        self.contatos.setItem(linha, 0, QTableWidgetItem(contato.nome if contato else ""))
+        nome = QTableWidgetItem(contato.nome if contato else "")
+        # o telefone saiu da tela, mas fica guardado na linha para não se perder ao salvar
+        nome.setData(Qt.ItemDataRole.UserRole, contato.telefone if contato else "")
+        self.contatos.setItem(linha, 0, nome)
         self.contatos.setItem(linha, 1, QTableWidgetItem(contato.email if contato else ""))
         tipo = QComboBox()
         tipo.addItem("Para", False)
-        tipo.addItem("Cópia (Cc)", True)
+        tipo.addItem("Supplier (Cc)", True)
         tipo.setCurrentIndex(1 if contato and contato.copia else 0)
         self.contatos.setCellWidget(linha, 2, tipo)
-        self.contatos.setItem(linha, 3, QTableWidgetItem(contato.telefone if contato else ""))
 
     def _remover_contato(self) -> None:
         for linha in sorted({i.row() for i in self.contatos.selectedIndexes()}, reverse=True):
@@ -135,21 +150,27 @@ class DialogoFornecedor(QDialog):
     def _salvar(self) -> None:
         contatos = []
         for linha in range(self.contatos.rowCount()):
-            nome, email, telefone = self._texto(linha, 0), self._texto(linha, 1), self._texto(linha, 3)
+            nome, email = self._texto(linha, 0), self._texto(linha, 1)
+            item_nome = self.contatos.item(linha, 0)
+            telefone = (item_nome.data(Qt.ItemDataRole.UserRole) or "") if item_nome else ""
             if not (nome or email or telefone):
                 continue
             copia = self.contatos.cellWidget(linha, 2).currentData()
             contatos.append({"nome": nome, "email": email, "copia": copia, "telefone": telefone})
+        commodities = [
+            self.commodities.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.commodities.count())
+            if self.commodities.item(i).checkState() == Qt.CheckState.Checked
+        ]
         dados = {
             "nome": self.nome.text(),
             "idioma": self.idioma.currentData(),
-            "categoria": self.categoria.currentText(),
+            "commodity_ids": commodities,
             "ativo": self.ativo.isChecked(),
             "observacoes": self.observacoes.toPlainText(),
             "contatos": contatos,
         }
         if self.original:
-            dados["id"] = self.original.id
+            dados = {**self.original.model_dump(), **dados}
 
         def salvar():
             return cadastros.salvar_fornecedor(self.janela.base, Fornecedor.model_validate(dados))

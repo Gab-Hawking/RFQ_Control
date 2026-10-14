@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from ..modelos import RFQ, Idioma, StatusRFQ, TipoModelo
 from ..servicos import rfq as srv
 from ..servicos.dias_uteis import dias_uteis_entre
+from ..servicos.email_rfq import destinatarios
 from ..servicos.formatos import data_curta, data_por_extenso, numero_br
 from . import estilo
 from .componentes import CampoData, Coluna, Tabela, botao, confirmar, executar
@@ -134,7 +135,16 @@ class DialogoRFQ(QDialog):
         acoes = QHBoxLayout()
         acoes.addWidget(botao("Gerar e-mail", lambda: self._email(self.idioma.currentData()),
                               dica="Abre o e-mail desta RFQ no idioma escolhido acima"))
-        acoes.addWidget(botao("Cobrança", self._cobranca, dica="Gera e-mail lembrando o fornecedor do prazo"))
+        acoes.addWidget(botao("Cobrança", self._cobranca,
+                              dica="Responde ao e-mail da RFQ (mesma conversa) lembrando o fornecedor do prazo"))
+        self.botao_confirmar = botao(
+            "Confirmar envio", self._confirmar_envio,
+            dica="O e-mail já foi enviado: marca a RFQ como Enviada (o Outlook confirma sozinho pelos Itens Enviados)")
+        acoes.addWidget(self.botao_confirmar)
+        self.botao_nao_enviado = botao(
+            "E-mail não enviado", self._nao_enviado,
+            dica="O rascunho do e-mail foi apagado ou não saiu: a RFQ volta para Rascunho")
+        acoes.addWidget(self.botao_nao_enviado)
         acoes.addWidget(botao("Selecionar como vencedora", self._vencedora))
         acoes.addStretch()
         acoes.addWidget(botao("Fechar", self.reject))
@@ -142,6 +152,12 @@ class DialogoRFQ(QDialog):
         layout.addLayout(acoes)
 
         self._carregar()
+        # envio confirmado pelo Outlook com esta tela aberta: mostra a situação nova
+        janela.envios_confirmados.connect(self._envios_confirmados)
+
+    def _envios_confirmados(self, numeros: list) -> None:
+        if self.rfq.numero in numeros and not self._tem_alteracoes():
+            self._carregar()
 
     # ------------------------------------------------ exibição
     def _carregar(self) -> None:
@@ -155,23 +171,31 @@ class DialogoRFQ(QDialog):
         situacao = rfq.situacao()
         cor = estilo.COR_SITUACAO.get(situacao, estilo.TINTA_SUAVE)
         self.etiqueta.setText(f"<span style='color:{cor}'>●</span> {situacao}")
+        # pílula clara: a bolinha colorida continua visível sobre o fundo cinza
+        self.etiqueta.setStyleSheet(
+            f"background:{estilo.SUPERFICIE}; color:{estilo.TINTA}; border-radius:11px; padding:3px 12px;")
 
         while self.info.count():
             item = self.info.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         prazo = ""
-        if rfq.prazo:
-            dias = dias_uteis_entre(rfq.data_envio or rfq.prazo, rfq.prazo, self.base.datas_feriados())
+        if rfq.aguardando_envio() and rfq.prazo:
+            prazo = (f"{data_por_extenso(rfq.prazo, Idioma.PT)} (escrito no e-mail aberto em "
+                     f"{data_curta(rfq.aguardando_envio_desde)}; gravado quando o envio for confirmado)")
+        elif rfq.prazo and rfq.data_envio:
+            dias = dias_uteis_entre(rfq.data_envio, rfq.prazo, self.base.datas_feriados())
             prazo = f"{data_por_extenso(rfq.prazo, Idioma.PT)} ({dias} dias úteis após o envio)"
         pares = [
             ("Fornecedor", fornecedor.nome if fornecedor else "—"),
+            ("Commodity", self.base.nomes_commodities(pacote.commodity_id if pacote else None)
+             or (self.base.nomes_commodities(fornecedor.commodity_ids) if fornecedor else "")),
             ("Para", "; ".join(fornecedor.emails_para()) if fornecedor else ""),
-            ("Cópia", "; ".join(fornecedor.emails_copia()) if fornecedor else ""),
+            ("Cópia", self._copia(fornecedor, pacote)),
             ("Pacote", pacote.titulo if pacote else "—"),
             ("Projeto", f"{projeto.nome} · {projeto.cliente} · {projeto.planta}" if projeto else "—"),
             ("Solicitante", solicitante.nome if solicitante else "—"),
-            ("Prazo", prazo or "definido ao gerar o e-mail"),
+            ("Prazo", prazo or "definido quando o e-mail for enviado"),
         ]
         for linha, (rotulo, valor) in enumerate(pares):
             titulo = QLabel(rotulo)
@@ -183,6 +207,8 @@ class DialogoRFQ(QDialog):
             self.info.addWidget(texto, linha, 1)
         self.info.setColumnStretch(1, 1)
 
+        self.botao_confirmar.setVisible(rfq.aguardando_envio())
+        self.botao_nao_enviado.setVisible(rfq.aguardando_envio())
         self.status.setCurrentIndex(self.status.findData(rfq.status))
         self.idioma.setCurrentIndex(self.idioma.findData(rfq.idioma))
         self.data_envio.definir(rfq.data_envio)
@@ -199,6 +225,15 @@ class DialogoRFQ(QDialog):
         self.historico.clear()
         for evento in reversed(rfq.historico):
             self.historico.addItem(f"{data_curta(evento.data_hora)}   {evento.descricao}")
+
+    def _copia(self, fornecedor, pacote) -> str:
+        """Cc do e-mail: Supplier (Cc) + Commodity Buyer + cópia padrão."""
+        if not fornecedor or not pacote:
+            return ""
+        try:
+            return "; ".join(destinatarios(self.base, fornecedor, [pacote])[1])
+        except srv.ErroNegocio:  # fornecedor sem e-mail (Para): mostra só os da cópia do fornecedor
+            return "; ".join(fornecedor.emails_copia())
 
     # ------------------------------------------------ ações
     def _dados_formulario(self) -> RFQ:
@@ -225,7 +260,8 @@ class DialogoRFQ(QDialog):
     def _gravar_se_alterado(self) -> bool:
         if not self._tem_alteracoes():
             return True
-        ok, rfq = executar(self, lambda: srv.salvar_rfq(self.base, self._dados_formulario()))
+        # só o que foi mudado no formulário é gravado sobre o registro atual (que pode ter mudado)
+        ok, rfq = executar(self, lambda: srv.salvar_rfq(self.base, self._dados_formulario(), carregada=self.rfq))
         if ok:
             self.rfq = rfq
             self.alterou = True
@@ -242,6 +278,22 @@ class DialogoRFQ(QDialog):
         if not self._gravar_se_alterado():
             return
         if gerar_emails(self.janela, [self.rfq], Idioma(idioma), tipo):
+            self.alterou = True
+            self._carregar()
+
+    def _confirmar_envio(self) -> None:
+        if not self._gravar_se_alterado():
+            return
+        ok, _ = executar(self, lambda: srv.confirmar_envio(self.base, self.rfq, descricao="Envio confirmado manualmente"))
+        if ok:
+            self.alterou = True
+            self._carregar()
+
+    def _nao_enviado(self) -> None:
+        if not self._gravar_se_alterado():
+            return
+        ok, _ = executar(self, lambda: srv.alterar_status(self.base, [self.rfq.id], StatusRFQ.RASCUNHO))
+        if ok:
             self.alterou = True
             self._carregar()
 

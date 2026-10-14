@@ -1,6 +1,6 @@
 """Base de dados: as antigas abas da planilha, editáveis como planilha.
 
-Abas (embaixo, como no Excel): Controle · Cadastro de Fornecedores · Cadastro de Projetos ·
+Abas (em cima, logo abaixo da descrição): Controle · Fornecedores · Commodities · Projetos ·
 Solicitantes · Feriados · Corpo do E-mail.
 """
 
@@ -55,7 +55,7 @@ FILTRO_ARQUIVOS = "Planilhas e CSV (*.xlsx *.xlsm *.csv);;Planilhas Excel (*.xls
 
 
 def _salvar_como(janela, titulo: str, nome: str) -> Path | None:
-    caminho, _ = QFileDialog.getSaveFileName(janela, titulo, str(Path.home() / nome), "Planilha Excel (*.xlsx)")
+    caminho, _ = QFileDialog.getSaveFileName(janela.window(), titulo, str(Path.home() / nome), "Planilha Excel (*.xlsx)")
     return Path(caminho) if caminho else None
 
 
@@ -83,7 +83,8 @@ class AbaCadastro(QWidget):
         self.busca = CaixaBusca(f"Buscar em {definicao.titulo.lower()}…")
         barra.addWidget(self.busca, 1)
         barra.addWidget(botao("+ Linha", self.nova_linha, dica="Nova linha no fim da tabela"))
-        barra.addWidget(botao("Excluir linhas", self.excluir, perigo=True))
+        barra.addWidget(botao("Excluir linhas", self.excluir, perigo=True,
+                              dica="Exclui as linhas selecionadas (ou selecione pelo número da linha e tecle Delete)"))
         for extra in extras or []:
             barra.addWidget(extra)
         barra.addSpacing(16)
@@ -95,7 +96,8 @@ class AbaCadastro(QWidget):
 
         dica = QLabel(
             f"{definicao.descricao} Edite direto nas células — cada linha é salva automaticamente. "
-            "Cole várias linhas do Excel com Ctrl+V. Colunas com * são obrigatórias."
+            "Cole várias linhas do Excel com Ctrl+V. Colunas com * são obrigatórias. Para excluir, selecione as "
+            "linhas pelo número à esquerda e tecle Delete (ou use 'Excluir linhas')."
         )
         dica.setObjectName("dica")
         dica.setWordWrap(True)
@@ -103,6 +105,7 @@ class AbaCadastro(QWidget):
 
         self.grade = GradeEditavel(janela.base, definicao)
         self.grade.mensagem.connect(janela.mensagem)
+        self.grade.excluir_linhas.connect(self.excluir)
         self.grade.modelo.alterado.connect(self._atualizar_contador)
         self.busca.textChanged.connect(self.grade.filtro.definir_busca)
         layout.addWidget(self.grade, 1)
@@ -111,8 +114,7 @@ class AbaCadastro(QWidget):
         layout.addWidget(self.contador)
 
     def atualizar(self) -> None:
-        if not self.grade.modelo.pendentes():
-            self.grade.modelo.carregar()
+        self.grade.modelo.carregar(manter_pendentes=True)
         self._atualizar_contador()
 
     def pendentes(self) -> int:
@@ -146,7 +148,7 @@ class AbaCadastro(QWidget):
 
     def importar(self) -> None:
         caminho, _ = QFileDialog.getOpenFileName(
-            self, f"Importar {self.definicao.titulo}", str(Path.home()), FILTRO_ARQUIVOS
+            self.window(), f"Importar {self.definicao.titulo}", str(Path.home()), FILTRO_ARQUIVOS
         )
         if not caminho:
             return
@@ -166,7 +168,8 @@ class AbaCadastro(QWidget):
     def baixar_modelo(self) -> None:
         destino = _salvar_como(self, "Salvar modelo", f"Modelo - {self.definicao.titulo}.xlsx")
         if destino:
-            ok, arquivo = executar(self, lambda: servico_abas.gerar_modelo(self.definicao, destino))
+            ok, arquivo = executar(
+                self, lambda: servico_abas.gerar_modelo(self.definicao, destino, self.janela.base))
             if ok:
                 _oferecer_abrir(self.janela, arquivo, "Modelo gerado")
 
@@ -218,6 +221,8 @@ class AbaControle(QWidget):
         barra.addWidget(self.busca, 1)
         barra.addWidget(botao("Abrir RFQ", self._abrir_atual, dica="Duplo clique na linha"))
         barra.addWidget(botao("Enviar e-mails…", self._enviar, dica="Escolher a RFQ e os fornecedores"))
+        barra.addWidget(botao("Excluir RFQ", self._excluir, perigo=True,
+                              dica="Exclui a RFQ das linhas selecionadas, com todos os itens dela (tecla Delete)"))
         barra.addSpacing(16)
         barra.addWidget(botao("Importar RFQs (Excel)…", self._importar, primario=True,
                               dica="Planilha no formato da aba Controle (a planilha antiga ou o modelo)"))
@@ -226,7 +231,8 @@ class AbaControle(QWidget):
         layout.addLayout(barra)
         dica = QLabel(
             "Uma linha por item de cada RFQ, como na aba Controle da planilha. Para alterar itens ou "
-            "fornecedores, abra a RFQ (duplo clique) ou use Nova solicitação."
+            "fornecedores, abra a RFQ (duplo clique) ou use Nova solicitação. Delete (ou 'Excluir RFQ') exclui a "
+            "RFQ inteira da linha selecionada, com todos os itens dela."
         )
         dica.setObjectName("dica")
         dica.setWordWrap(True)
@@ -249,6 +255,7 @@ class AbaControle(QWidget):
         ])
         self.tabela.setItemDelegateForColumn(11, DelegadoSituacao(self.tabela))
         self.tabela.ativada.connect(self._abrir)
+        self.tabela.excluir.connect(self._excluir)
         self.busca.textChanged.connect(self.tabela.filtro.definir_busca)
         layout.addWidget(self.tabela, 1)
         self.contador = QLabel()
@@ -295,6 +302,12 @@ class AbaControle(QWidget):
         if acoes.enviar_emails(self.janela, linha.rfq.pacote_id if linha else None):
             self.atualizar()
 
+    def _excluir(self) -> None:
+        rfqs = list({l.rfq.id: l.rfq for l in self.tabela.selecionados()}.values())
+        if acoes.excluir_rfqs(self.janela, rfqs, "Na aba Controle cada linha é um item: a RFQ sai com todas as "
+                                                 "linhas de item dela."):
+            self.atualizar()
+
     def _importar(self) -> None:
         from .pagina_configuracoes import importar_planilha_antiga
 
@@ -336,8 +349,10 @@ class PaginaBaseDados(QWidget):
         self.controle = AbaControle(janela)
         self.fornecedores = AbaCadastro(
             janela, servico_abas.ABA_FORNECEDORES,
-            [botao("Contatos detalhados…", self._contatos, dica="Vários contatos, nomes e telefones")],
+            [botao("Detalhes do fornecedor…", self._contatos,
+                   dica="Nome dos contatos (usado na saudação do e-mail), fornecedor ativo e observações")],
         )
+        self.commodities = AbaCadastro(janela, servico_abas.ABA_COMMODITIES)
         self.projetos = AbaCadastro(janela, servico_abas.ABA_PROJETOS)
         self.solicitantes = AbaCadastro(janela, servico_abas.ABA_SOLICITANTES)
         self.feriados = AbaCadastro(
@@ -348,12 +363,12 @@ class PaginaBaseDados(QWidget):
 
         self.abas = QTabWidget()
         self.abas.setObjectName("abasPlanilha")
-        self.abas.setTabPosition(QTabWidget.TabPosition.South)
-        self.abas.setDocumentMode(True)
+        self.abas.setTabPosition(QTabWidget.TabPosition.North)
         for widget, titulo in (
             (self.controle, "Controle"),
-            (self.fornecedores, "Cadastro de Fornecedores"),
-            (self.projetos, "Cadastro de Projetos"),
+            (self.fornecedores, "Fornecedores"),
+            (self.commodities, "Commodities"),
+            (self.projetos, "Projetos"),
             (self.solicitantes, "Solicitantes"),
             (self.feriados, "Feriados"),
             (self.modelos, "Corpo do E-mail"),
@@ -364,10 +379,11 @@ class PaginaBaseDados(QWidget):
 
     @property
     def abas_cadastro(self) -> list[AbaCadastro]:
-        return [self.fornecedores, self.projetos, self.solicitantes, self.feriados]
+        return [self.fornecedores, self.commodities, self.projetos, self.solicitantes, self.feriados]
 
     def mostrar(self, chave: str) -> None:
-        mapa = {"controle": self.controle, "fornecedores": self.fornecedores, "projetos": self.projetos,
+        mapa = {"controle": self.controle, "fornecedores": self.fornecedores, "commodities": self.commodities,
+                "projetos": self.projetos,
                 "solicitantes": self.solicitantes, "feriados": self.feriados, "modelos": self.modelos}
         self.abas.setCurrentWidget(mapa[chave])
         self.atualizar()
