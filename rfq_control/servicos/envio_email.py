@@ -4,7 +4,9 @@
   "Aguardando envio". Ela só passa a Enviada quando o e-mail aparece nos Itens Enviados do
   Outlook (ou quando o usuário confirma o envio). Se o rascunho for apagado, nada é registrado
   como enviado; o usuário devolve a RFQ para rascunho (Alterar status → Rascunho).
-- **Envio direto**: o Outlook envia na hora e a RFQ é registrada como enviada.
+- **Envio direto**: o Outlook envia na hora e a RFQ é registrada como enviada. Se o Outlook recusar
+  o envio feito por outro programa (proteção do Outlook ou política da empresa), o e-mail fica aberto
+  para o usuário clicar em Enviar e a RFQ segue como na revisão — nada se perde.
 - **Cobrança**: responde ao e-mail original da RFQ (mesma conversa; o assunto tem de ser o do
   e-mail da RFQ). Sem o original, sai um e-mail "RE:" com a solicitação original citada abaixo.
 """
@@ -41,6 +43,43 @@ _PREFIXO_RESPOSTA = re.compile(r"^\s*(re|res|fw|fwd|enc|tr|aw|wg|rv)\s*:", re.IG
 
 class ErroOutlook(Exception):
     """O Outlook não pôde ser usado (não instalado, fechado com erro, etc.)."""
+
+
+class EnvioNaoAutomatico(ErroOutlook):
+    """O Outlook não enviou o e-mail sozinho, mas o deixou aberto para o usuário revisar e enviar."""
+
+
+# causas prováveis dos erros COM mais comuns (HRESULT → explicação)
+_CAUSAS_OUTLOOK = {
+    -2147467260: "o Outlook bloqueou o envio feito por outro programa (proteção do Outlook ou política da "
+                 "empresa); a TI pode liberar o acesso programático",  # E_ABORT
+    -2146959355: "o Outlook e o RFQ Control estão abertos com permissões diferentes (um deles como "
+                 "administrador); abra os dois do mesmo jeito",  # CO_E_SERVER_EXEC_FAILURE
+    -2147221164: "o Outlook clássico não está instalado ou o \"novo Outlook\" está ativo — ele não aceita "
+                 "automação",  # REGDB_E_CLASSNOTREG
+    -2147221005: "o Outlook clássico não está instalado ou o \"novo Outlook\" está ativo — ele não aceita "
+                 "automação",  # CO_E_CLASSSTRING
+    -2147418111: "o Outlook está ocupado (há uma janela ou um aviso aberto nele)",  # RPC_E_CALL_REJECTED
+}
+
+
+def explicar_erro_outlook(erro: Exception) -> str:
+    """Texto legível de um erro do Outlook, com a causa provável nos casos conhecidos.
+
+    Erros COM (pywintypes.com_error) têm ``args = (hresult, texto, excepinfo, argumento)``; o motivo
+    real costuma estar em ``excepinfo`` = (código, origem, descrição, ajuda, contexto, scode).
+    """
+    args = getattr(erro, "args", ())
+    codigo = args[0] if args and isinstance(args[0], int) else None
+    info = args[2] if len(args) > 2 and isinstance(args[2], tuple) else ()
+    descricao = str(info[2]).strip() if len(info) > 2 and info[2] else ""
+    interno = info[5] if len(info) > 5 and isinstance(info[5], int) else None
+    if codigo is None:
+        texto = str(erro)
+    else:
+        texto = descricao or (str(args[1]).strip() if len(args) > 1 and args[1] else f"erro {codigo}")
+    causa = _CAUSAS_OUTLOOK.get(interno) or _CAUSAS_OUTLOOK.get(codigo)
+    return f"{texto} — {causa}" if causa else texto
 
 
 @dataclass
@@ -132,7 +171,7 @@ def _conectar_outlook(iniciar: bool = True) -> Any:
             return win32com.client.Dispatch("Outlook.Application")
         return win32com.client.GetActiveObject("Outlook.Application")
     except Exception as erro:  # erros COM vêm como pywintypes.com_error
-        raise ErroOutlook(f"Não foi possível conectar ao Outlook: {erro}") from erro
+        raise ErroOutlook(f"Não foi possível conectar ao Outlook: {explicar_erro_outlook(erro)}") from erro
 
 
 def _preencher_e_mostrar(mensagem: Any, email: EmailMontado, enviar: bool, destinatarios: bool = True) -> None:
@@ -149,7 +188,26 @@ def _preencher_e_mostrar(mensagem: Any, email: EmailMontado, enviar: bool, desti
     for anexo in email.anexos:
         mensagem.Attachments.Add(str(anexo))
     if enviar:
+        _enviar_ou_mostrar(mensagem)
+
+
+def _enviar_ou_mostrar(mensagem: Any) -> None:
+    """Envia; se o Outlook recusar o envio, mostra o e-mail para o usuário enviar (nada se perde)."""
+    try:
         mensagem.Send()
+        return
+    except Exception as erro:  # noqa: BLE001 - erros COM vêm como pywintypes.com_error
+        motivo = explicar_erro_outlook(erro)
+        log.warning("O Outlook não enviou o e-mail automaticamente: %r", erro)
+        try:
+            mensagem.Display()
+        except Exception:  # noqa: BLE001
+            log.exception("Também não foi possível exibir o e-mail no Outlook")
+            raise ErroOutlook(f"O Outlook não enviou o e-mail: {motivo}") from erro
+    raise EnvioNaoAutomatico(
+        f"O Outlook não enviou automaticamente ({motivo}). O e-mail ficou aberto no Outlook: confira e clique "
+        "em Enviar — a RFQ passa a Enviada quando ele aparecer nos Itens Enviados."
+    )
 
 
 def abrir_no_outlook(email: EmailMontado, enviar: bool = False) -> None:
@@ -161,9 +219,12 @@ def abrir_no_outlook(email: EmailMontado, enviar: bool = False) -> None:
     outlook = _conectar_outlook()
     try:
         _preencher_e_mostrar(outlook.CreateItem(0), email, enviar)  # 0 = olMailItem
+    except ErroOutlook:
+        raise
     except Exception as erro:
         acao = "enviar pelo" if enviar else "abrir o"
-        raise ErroOutlook(f"Não foi possível {acao} Outlook: {erro}") from erro
+        log.warning("Falha ao %s Outlook: %r", acao, erro)
+        raise ErroOutlook(f"Não foi possível {acao} Outlook: {explicar_erro_outlook(erro)}") from erro
 
 
 def _data_hora(valor: Any) -> datetime | None:
@@ -236,9 +297,12 @@ def responder_no_outlook(original: Any, email: EmailMontado, enviar: bool = Fals
     try:
         resposta = original.ReplyAll()
         _preencher_e_mostrar(resposta, replace(email, anexos=[]), enviar, destinatarios=False)
+    except ErroOutlook:
+        raise
     except Exception as erro:
         acao = "enviar" if enviar else "abrir"
-        raise ErroOutlook(f"Não foi possível {acao} a resposta no Outlook: {erro}") from erro
+        log.warning("Falha ao %s a resposta no Outlook: %r", acao, erro)
+        raise ErroOutlook(f"Não foi possível {acao} a resposta no Outlook: {explicar_erro_outlook(erro)}") from erro
 
 
 def confirmar_envios_outlook(base: BaseDados, outlook: Any | None = None) -> list[RFQ]:
@@ -272,6 +336,14 @@ def confirmar_envios_outlook(base: BaseDados, outlook: Any | None = None) -> lis
 # ---------------------------------------------------------------- entrega
 
 
+@dataclass
+class Entrega:
+    via_outlook: bool
+    arquivo_eml: Path | None = None
+    aviso: str = ""
+    enviado: bool = False  # False = aberto para revisão (inclusive quando o Outlook recusou o envio direto)
+
+
 def entregar(
     base: BaseDados,
     email: EmailMontado,
@@ -280,22 +352,24 @@ def entregar(
     abrir: bool = True,
     message_id: str = "",
     em_resposta_a: str = "",
-) -> tuple[bool, Path | None, str]:
-    """Abre (ou envia) o e-mail no Outlook; sem Outlook, gera o .eml. Devolve (via Outlook, .eml, aviso)."""
+) -> Entrega:
+    """Abre (ou envia) o e-mail no Outlook; sem Outlook, gera o .eml."""
     config = base.configuracoes
     if enviar:
         if config.metodo_email != MetodoEmail.OUTLOOK:
             raise ErroNegocio("O envio automático usa o Outlook. Em Configurações, escolha abrir os e-mails via Outlook.")
         try:
             abrir_no_outlook(email, enviar=True)
+        except EnvioNaoAutomatico as erro:
+            return Entrega(True, aviso=str(erro))
         except ErroOutlook as erro:
             raise ErroNegocio(str(erro)) from erro
-        return True, None, ""
+        return Entrega(True, enviado=True)
     aviso = ""
     if config.metodo_email == MetodoEmail.OUTLOOK and abrir:
         try:
             abrir_no_outlook(email)
-            return True, None, ""
+            return Entrega(True)
         except ErroOutlook as erro:
             log.warning("Outlook indisponível, gerando .eml: %s", erro)
             aviso = f"{erro} O e-mail foi gerado como arquivo .eml."
@@ -303,7 +377,7 @@ def entregar(
     arquivo = gerar_eml(email, destino, config.assinatura_html, message_id, em_resposta_a)
     if abrir:
         abrir_arquivo(arquivo)
-    return False, arquivo, aviso
+    return Entrega(False, arquivo, aviso)
 
 
 def _cabecalho_citacao(original: EmailMontado, rfq: RFQ) -> str:
@@ -346,6 +420,15 @@ def _assunto_da_rfq(base: BaseDados, rfq: RFQ) -> str:
         return ""
 
 
+def _cobranca_respondida(
+    base: BaseDados, rfq: RFQ, email: EmailMontado, enviado: bool, aviso: str = ""
+) -> ResultadoEmail:
+    acao = "enviado" if enviado else "aberto para revisão"
+    rfq = rfq.model_copy(deep=True)
+    rfq.registrar(f"E-mail de cobrança {acao} no Outlook como resposta ao e-mail da RFQ — {email.idioma.rotulo}")
+    return ResultadoEmail(base.rfqs.salvar(rfq), email, True, aviso=aviso, enviado=enviado, resposta=True)
+
+
 def _gerar_cobranca(
     base: BaseDados, rfq: RFQ, email: EmailMontado, abrir: bool, enviar: bool
 ) -> ResultadoEmail:
@@ -371,30 +454,26 @@ def _gerar_cobranca(
         if original is not None:
             try:
                 responder_no_outlook(original, email, enviar)
+            except EnvioNaoAutomatico as erro:  # a resposta ficou aberta no Outlook para o usuário enviar
+                return _cobranca_respondida(base, rfq, email, enviado=False, aviso=str(erro))
             except ErroOutlook as erro:
                 if enviar:
                     raise ErroNegocio(str(erro)) from erro
                 aviso_busca = f"{erro} A cobrança foi aberta como e-mail novo (RE:)."
             else:
-                acao = "enviado" if enviar else "aberto para revisão"
-                rfq = rfq.model_copy(deep=True)
-                rfq.registrar(f"E-mail de cobrança {acao} no Outlook como resposta ao e-mail da RFQ — "
-                              f"{email.idioma.rotulo}")
-                return ResultadoEmail(base.rfqs.salvar(rfq), email, True, enviado=enviar, resposta=True)
+                return _cobranca_respondida(base, rfq, email, enviado=enviar)
 
     completo = cobranca_com_original(base, rfq, email)
-    via_outlook, arquivo, aviso_entrega = entregar(
-        base, completo, f"{rfq.numero}_cobranca", enviar, abrir, em_resposta_a=rfq.message_id
-    )
-    if enviar:
+    entrega = entregar(base, completo, f"{rfq.numero}_cobranca", enviar, abrir, em_resposta_a=rfq.message_id)
+    if entrega.enviado:
         acao = "enviado pelo Outlook (e-mail novo, RE:)"
     else:
-        acao = "aberto para revisão (" + ("Outlook" if via_outlook else "arquivo .eml") + ")"
+        acao = "aberto para revisão (" + ("Outlook" if entrega.via_outlook else "arquivo .eml") + ")"
     rfq = rfq.model_copy(deep=True)
     rfq.registrar(f"E-mail de cobrança {acao} — {email.idioma.rotulo}")
     return ResultadoEmail(
-        base.rfqs.salvar(rfq), completo, via_outlook, arquivo_eml=arquivo,
-        aviso=" ".join(a for a in (aviso_busca, aviso_entrega) if a), enviado=enviar,
+        base.rfqs.salvar(rfq), completo, entrega.via_outlook, arquivo_eml=entrega.arquivo_eml,
+        aviso=" ".join(a for a in (aviso_busca, entrega.aviso) if a), enviado=entrega.enviado,
     )
 
 
@@ -411,7 +490,8 @@ def gerar_email_rfq(
 
     ``enviar=False``: abre o rascunho para revisão (Outlook, ou .eml como alternativa); a RFQ fica
     "Aguardando envio" até o envio ser confirmado.
-    ``enviar=True``: envia direto pelo Outlook e registra o envio; se o Outlook falhar, nada é registrado.
+    ``enviar=True``: envia direto pelo Outlook e registra o envio. Se o Outlook recusar o envio, o e-mail
+    fica aberto nele e a RFQ segue como na revisão; se o Outlook não puder ser usado, nada é registrado.
     """
     rfq = base.rfqs.obter(rfq_id)
     if not rfq:
@@ -422,16 +502,16 @@ def gerar_email_rfq(
         return _gerar_cobranca(base, rfq, email, abrir, enviar)
 
     message_id = make_msgid(domain="rfq-control")
-    via_outlook, arquivo, aviso = entregar(
-        base, email, f"{rfq.numero}_{tipo.name.lower()}", enviar, abrir, message_id=message_id
-    )
-    if enviar:
+    entrega = entregar(base, email, f"{rfq.numero}_{tipo.name.lower()}", enviar, abrir, message_id=message_id)
+    if entrega.enviado:
         rfq = registrar_envio(
             base, rfq, email.idioma, f"E-mail de RFQ enviado pelo Outlook — {email.idioma.rotulo}", hoje,
             email.prazo, assunto=email.assunto,
         )
     else:
-        meio = "Outlook" if via_outlook else "arquivo .eml"
+        meio = "Outlook" if entrega.via_outlook else "arquivo .eml"
+        if enviar:
+            meio += "; o Outlook não enviou automaticamente"
         if rfq.status == StatusRFQ.RASCUNHO:
             texto = (f"E-mail de RFQ aberto para revisão ({meio}) — {email.idioma.rotulo}. A RFQ passa a Enviada "
                      "quando o e-mail aparecer nos Itens Enviados.")
@@ -439,8 +519,9 @@ def gerar_email_rfq(
             texto = f"E-mail de RFQ reaberto para revisão ({meio}, reenvio) — {email.idioma.rotulo}"
         rfq = registrar_revisao(
             base, rfq, email.idioma, texto,
-            email.prazo, email.assunto, "" if via_outlook else message_id,
+            email.prazo, email.assunto, "" if entrega.via_outlook else message_id,
         )
     return ResultadoEmail(
-        rfq=rfq, email=email, via_outlook=via_outlook, arquivo_eml=arquivo, aviso=aviso, enviado=enviar
+        rfq=rfq, email=email, via_outlook=entrega.via_outlook, arquivo_eml=entrega.arquivo_eml, aviso=entrega.aviso,
+        enviado=entrega.enviado,
     )

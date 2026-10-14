@@ -61,8 +61,21 @@ def test_disparo_cria_rfq_para_novos_e_pula_quem_nao_tem_email(base_populada, pa
 
 def test_envio_automatico(base_populada, pacote, outlook):
     resultado = disparar(base_populada, pacote.id, [Destinatario("f1")], enviar=True, hoje=HOJE)
-    assert resultado.enviados[0].mensagem == "enviado"
+    assert resultado.enviados[0].mensagem == "enviado" and resultado.enviados[0].enviado
     assert outlook == [("joao@um.com", True)]
+    assert resultado.resumo() == "1 e-mail(s) enviado(s)"
+
+
+def test_envio_automatico_recusado_pelo_outlook_abre_para_revisao(base_populada, pacote, monkeypatch):
+    from outlook_falso import OutlookFalso, erro_com
+
+    outlook = OutlookFalso(erro_envio=erro_com(-2147467260, "Operação anulada"))
+    monkeypatch.setattr(envio_email, "_conectar_outlook", lambda iniciar=True: outlook)
+    resultado = disparar(base_populada, pacote.id, [Destinatario("f1"), Destinatario("f2")], enviar=True, hoje=HOJE)
+    assert [i.mensagem for i in resultado.itens] == ["aberto para revisão"] * 2
+    assert not any(i.enviado for i in resultado.itens) and all(i.exibido for i in outlook.criados)
+    assert resultado.resumo() == "2 e-mail(s) aberto(s) para revisão"
+    assert len(resultado.avisos) == 1 and "bloqueou o envio" in resultado.avisos[0]  # o mesmo aviso, uma vez
 
 
 def test_envio_automatico_exige_outlook(base_populada, pacote):

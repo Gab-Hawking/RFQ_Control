@@ -66,6 +66,7 @@ class ItemDisparo:
     idioma: Idioma | None
     ok: bool
     mensagem: str
+    enviado: bool = False  # ok e enviado de fato (não só aberto para revisão)
 
 
 @dataclass
@@ -81,6 +82,17 @@ class ResultadoDisparo:
     @property
     def falhas(self) -> list[ItemDisparo]:
         return [i for i in self.itens if not i.ok]
+
+    def resumo(self) -> str:
+        """Ex.: "2 e-mail(s) enviado(s) · 1 aberto(s) para revisão · 1 não enviado(s)"."""
+        enviados = sum(1 for i in self.enviados if i.enviado)
+        abertos = len(self.enviados) - enviados
+        partes = [f"{enviados} e-mail(s) enviado(s)"] if enviados else []
+        if abertos:
+            partes.append(f"{abertos} {'' if partes else 'e-mail(s) '}aberto(s) para revisão")
+        if self.falhas:
+            partes.append(f"{len(self.falhas)} não enviado(s)")
+        return " · ".join(partes) or "Nenhum e-mail"
 
 
 def disparar(
@@ -134,8 +146,9 @@ def disparar(
             continue
         if enviado.aviso and enviado.aviso not in resultado.avisos:
             resultado.avisos.append(enviado.aviso)
-        acao = "enviado" if enviar else "aberto para revisão"
+        acao = "enviado" if enviado.enviado else "aberto para revisão"
         if enviado.resposta:
             acao += " (resposta ao e-mail da RFQ)"
-        resultado.itens.append(ItemDisparo(fornecedor.nome, rfq.numero, enviado.email.idioma, True, acao))
+        resultado.itens.append(
+            ItemDisparo(fornecedor.nome, rfq.numero, enviado.email.idioma, True, acao, enviado.enviado))
     return resultado

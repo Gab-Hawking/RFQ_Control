@@ -342,10 +342,7 @@ class DialogoEnvio(QDialog):
         if not ok:
             return
         self.resultado = resultado
-        acao = "enviado(s)" if automatico else "aberto(s) para revisão"
-        resumo = f"{len(resultado.enviados)} e-mail(s) {acao}"
-        if resultado.falhas:
-            resumo += f" · {len(resultado.falhas)} não enviado(s)"
+        resumo = resultado.resumo()
         if resultado.rfqs_criadas:
             resumo += "\nNovas RFQs: " + ", ".join(resultado.rfqs_criadas)
         detalhes = [

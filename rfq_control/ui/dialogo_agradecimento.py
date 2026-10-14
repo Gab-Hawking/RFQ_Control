@@ -243,10 +243,7 @@ class DialogoAgradecimento(QDialog):
         if not ok:
             return
         self.resultado = resultado
-        acao = "enviado(s)" if automatico else "aberto(s) para revisão"
-        resumo = f"{len(resultado.enviados)} e-mail(s) {acao}"
-        if resultado.falhas:
-            resumo += f" · {len(resultado.falhas)} não enviado(s)"
+        resumo = resultado.resumo()
         detalhes = [
             f"{'✓' if i.ok else '✗'} {i.fornecedor} — {i.numero}" + (f" ({i.idioma.rotulo})" if i.idioma else "")
             + f": {i.mensagem}"

@@ -27,7 +27,10 @@ macros — sem travar, com tudo registrado e com mais recursos.
 - **Enviar e-mails** (botão no menu lateral): escolha a RFQ, marque os fornecedores que vão receber e envie —
   cada um recebe o e-mail padrão no seu idioma, com tabela de itens (com volume anual), quadro do projeto,
   prazo em destaque e anexos. Quem ainda não tem RFQ naquele pacote ganha um número novo na hora. Dá para
-  **abrir no Outlook para revisar** (como a macro) ou **enviar automaticamente pelo Outlook**.
+  **abrir no Outlook para revisar** (como a macro) ou **enviar automaticamente pelo Outlook**. Se o Outlook
+  recusar o envio automático (proteção do Outlook ou política da empresa para programas que enviam e-mails),
+  o e-mail fica aberto nele para você clicar em Enviar — a mensagem do app diz o motivo e a RFQ segue como na
+  revisão (*Aguardando envio*).
 - **Envio confirmado de verdade:** e-mail aberto para revisão deixa a RFQ em **Aguardando envio**; ela só
   passa a **Enviada** quando o e-mail aparece nos **Itens Enviados** do Outlook (o app confere ao abrir e ao
   voltar para ele e a cada 30 s enquanto houver pendentes) ou com *Confirmar envio*. Se o rascunho for
