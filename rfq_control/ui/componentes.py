@@ -317,6 +317,7 @@ class Tabela(QTableView):
     """Tabela somente leitura com busca, ordenação e seleção de linhas."""
 
     ativada = Signal(object)
+    excluir = Signal()  # tecla Delete com linhas selecionadas (a página decide o que excluir)
 
     def __init__(self, colunas: list[Coluna], pai=None, selecao_multipla: bool = True):
         super().__init__(pai)
@@ -380,6 +381,9 @@ class Tabela(QTableView):
     def keyPressEvent(self, evento):  # noqa: N802
         if evento.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.currentIndex().isValid():
             self.ativada.emit(self.currentIndex().data(PAPEL_OBJETO))
+            return
+        if evento.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.selecionados():
+            self.excluir.emit()
             return
         super().keyPressEvent(evento)
 

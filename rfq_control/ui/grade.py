@@ -6,7 +6,8 @@
 - colunas calculadas (ex.: e-mail do Commodity Buyer) aparecem em cinza e não são editáveis;
 - cada linha é validada e salva sozinha ao terminar a edição;
 - linhas com problema ficam destacadas, com o motivo na dica (tooltip);
-- Ctrl+V cola várias linhas/colunas copiadas do Excel; Ctrl+C copia; Delete limpa células.
+- Ctrl+V cola várias linhas/colunas copiadas do Excel; Ctrl+C copia; Delete limpa células — com linhas
+  inteiras selecionadas (clique no número da linha), Delete exclui as linhas.
 """
 
 from __future__ import annotations
@@ -355,6 +356,7 @@ class GradeEditavel(QTableView):
     """Tabela editável com busca, colar/copiar do Excel e exclusão de linhas."""
 
     mensagem = Signal(str)
+    excluir_linhas = Signal()  # Delete com linhas inteiras selecionadas
 
     def __init__(self, base: BaseDados, definicao: DefinicaoAba, pai=None):
         super().__init__(pai)
@@ -376,6 +378,8 @@ class GradeEditavel(QTableView):
         )
         self.verticalHeader().setDefaultSectionSize(32)
         self.verticalHeader().setMinimumWidth(36)
+        # o número da linha não recebe o foco: sem isto, o Delete logo depois iria para a caixa de busca
+        self.verticalHeader().sectionPressed.connect(lambda _: self.setFocus())
         cabecalho = self.horizontalHeader()
         cabecalho.setHighlightSections(False)
         cabecalho.setStretchLastSection(True)
@@ -391,6 +395,12 @@ class GradeEditavel(QTableView):
     def linhas_selecionadas(self) -> list[int]:
         return sorted({self._origem(i).row() for i in self.selectionModel().selectedIndexes()})
 
+    def linhas_inteiras(self) -> bool:
+        """A seleção é de linhas inteiras (clique no número da linha), não só de algumas células."""
+        selecao = self.selectionModel()
+        linhas = {i.row() for i in selecao.selectedIndexes()}
+        return bool(linhas) and linhas == {i.row() for i in selecao.selectedRows()}
+
     def registro_atual(self) -> Any | None:
         indice = self.currentIndex()
         if not indice.isValid():
@@ -405,7 +415,7 @@ class GradeEditavel(QTableView):
         self.setCurrentIndex(destino)
         self.edit(destino)
 
-    # ------------------------------------------------ teclado: colar, copiar, limpar
+    # ------------------------------------------------ teclado: colar, copiar, limpar, excluir
     def keyPressEvent(self, evento):  # noqa: N802
         if self.state() != QAbstractItemView.State.EditingState:
             if evento.matches(QKeySequence.StandardKey.Paste):
@@ -415,7 +425,10 @@ class GradeEditavel(QTableView):
                 self.copiar()
                 return
             if evento.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-                self.limpar_celulas()
+                if self.linhas_inteiras():
+                    self.excluir_linhas.emit()
+                else:
+                    self.limpar_celulas()
                 return
         super().keyPressEvent(evento)
 

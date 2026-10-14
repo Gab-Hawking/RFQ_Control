@@ -15,14 +15,12 @@ from ..servicos.dias_uteis import dias_uteis_entre
 from ..servicos.exportacao import exportar_rfqs
 from ..servicos.envio_email import abrir_arquivo
 from ..servicos.formatos import numero_br
-from ..servicos.rfq import excluir_pacote, excluir_rfq, pacotes_sem_rfq
 from . import acoes
 from .componentes import (
     CaixaBusca,
     Coluna,
     DelegadoSituacao,
     Tabela,
-    avisar,
     botao,
     cabecalho_pagina,
     confirmar,
@@ -84,7 +82,9 @@ class PaginaRFQs(QWidget):
                                     "todos os fornecedores das RFQs de um projeto"))
         botoes.addWidget(botao("Alterar status", self._status))
         botoes.addStretch()
-        botoes.addWidget(botao("Excluir rascunho", self._excluir, perigo=True))
+        botoes.addWidget(botao("Excluir", self._excluir, perigo=True,
+                               dica="Exclui as RFQs selecionadas (tecla Delete). Só rascunhos são excluídos; "
+                                    "as já enviadas podem ser marcadas como Cancelada"))
         botoes.addWidget(botao("Exportar para Excel", self._exportar))
         layout.addLayout(botoes)
 
@@ -108,6 +108,7 @@ class PaginaRFQs(QWidget):
         self.tabela = Tabela(colunas)
         self.tabela.setItemDelegateForColumn(1, DelegadoSituacao(self.tabela))
         self.tabela.ativada.connect(self._abrir_rfq)
+        self.tabela.excluir.connect(self._excluir)
         self.tabela.sortByColumn(0, Qt.SortOrder.DescendingOrder)
         self.busca.textChanged.connect(self._buscar)
         layout.addWidget(self.tabela, 1)
@@ -239,27 +240,8 @@ class PaginaRFQs(QWidget):
             self.atualizar(recarregar_filtros=False)
 
     def _excluir(self) -> None:
-        selecionadas = self.tabela.selecionados()
-        if not selecionadas:
-            avisar(self, "Selecione as RFQs em rascunho que deseja excluir.")
-            return
-        numeros = ", ".join(r.numero for r in selecionadas)
-        if not confirmar(self, f"Excluir {numeros}?", "Excluir", "Excluir"):
-            return
-        for rfq in selecionadas:
-            ok, _ = executar(self, lambda r=rfq: excluir_rfq(self.base, r.id))
-            if not ok:
-                break
-        vazios = pacotes_sem_rfq(self.base, [r.pacote_id for r in selecionadas])
-        if vazios and confirmar(
-            self,
-            "Estes pacotes ficaram sem nenhuma RFQ:\n• " + "\n• ".join(p.titulo for p in vazios)
-            + "\n\nExcluir também os pacotes (itens e anexos)? Assim eles não aparecem mais em 'Enviar e-mails'.",
-            "Pacotes sem RFQ", "Excluir pacotes",
-        ):
-            for pacote in vazios:
-                executar(self, lambda p=pacote: excluir_pacote(self.base, p.id))
-        self.atualizar(recarregar_filtros=False)
+        if acoes.excluir_rfqs(self.janela, self.tabela.selecionados()):
+            self.atualizar(recarregar_filtros=False)
 
     def _agradecimento(self) -> None:
         atual = self.tabela.atual()

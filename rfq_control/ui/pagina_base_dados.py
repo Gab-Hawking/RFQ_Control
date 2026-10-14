@@ -83,7 +83,8 @@ class AbaCadastro(QWidget):
         self.busca = CaixaBusca(f"Buscar em {definicao.titulo.lower()}…")
         barra.addWidget(self.busca, 1)
         barra.addWidget(botao("+ Linha", self.nova_linha, dica="Nova linha no fim da tabela"))
-        barra.addWidget(botao("Excluir linhas", self.excluir, perigo=True))
+        barra.addWidget(botao("Excluir linhas", self.excluir, perigo=True,
+                              dica="Exclui as linhas selecionadas (ou selecione pelo número da linha e tecle Delete)"))
         for extra in extras or []:
             barra.addWidget(extra)
         barra.addSpacing(16)
@@ -95,7 +96,8 @@ class AbaCadastro(QWidget):
 
         dica = QLabel(
             f"{definicao.descricao} Edite direto nas células — cada linha é salva automaticamente. "
-            "Cole várias linhas do Excel com Ctrl+V. Colunas com * são obrigatórias."
+            "Cole várias linhas do Excel com Ctrl+V. Colunas com * são obrigatórias. Para excluir, selecione as "
+            "linhas pelo número à esquerda e tecle Delete (ou use 'Excluir linhas')."
         )
         dica.setObjectName("dica")
         dica.setWordWrap(True)
@@ -103,6 +105,7 @@ class AbaCadastro(QWidget):
 
         self.grade = GradeEditavel(janela.base, definicao)
         self.grade.mensagem.connect(janela.mensagem)
+        self.grade.excluir_linhas.connect(self.excluir)
         self.grade.modelo.alterado.connect(self._atualizar_contador)
         self.busca.textChanged.connect(self.grade.filtro.definir_busca)
         layout.addWidget(self.grade, 1)
@@ -218,6 +221,8 @@ class AbaControle(QWidget):
         barra.addWidget(self.busca, 1)
         barra.addWidget(botao("Abrir RFQ", self._abrir_atual, dica="Duplo clique na linha"))
         barra.addWidget(botao("Enviar e-mails…", self._enviar, dica="Escolher a RFQ e os fornecedores"))
+        barra.addWidget(botao("Excluir RFQ", self._excluir, perigo=True,
+                              dica="Exclui a RFQ das linhas selecionadas, com todos os itens dela (tecla Delete)"))
         barra.addSpacing(16)
         barra.addWidget(botao("Importar RFQs (Excel)…", self._importar, primario=True,
                               dica="Planilha no formato da aba Controle (a planilha antiga ou o modelo)"))
@@ -226,7 +231,8 @@ class AbaControle(QWidget):
         layout.addLayout(barra)
         dica = QLabel(
             "Uma linha por item de cada RFQ, como na aba Controle da planilha. Para alterar itens ou "
-            "fornecedores, abra a RFQ (duplo clique) ou use Nova solicitação."
+            "fornecedores, abra a RFQ (duplo clique) ou use Nova solicitação. Delete (ou 'Excluir RFQ') exclui a "
+            "RFQ inteira da linha selecionada, com todos os itens dela."
         )
         dica.setObjectName("dica")
         dica.setWordWrap(True)
@@ -249,6 +255,7 @@ class AbaControle(QWidget):
         ])
         self.tabela.setItemDelegateForColumn(11, DelegadoSituacao(self.tabela))
         self.tabela.ativada.connect(self._abrir)
+        self.tabela.excluir.connect(self._excluir)
         self.busca.textChanged.connect(self.tabela.filtro.definir_busca)
         layout.addWidget(self.tabela, 1)
         self.contador = QLabel()
@@ -293,6 +300,12 @@ class AbaControle(QWidget):
     def _enviar(self) -> None:
         linha = self.tabela.atual()
         if acoes.enviar_emails(self.janela, linha.rfq.pacote_id if linha else None):
+            self.atualizar()
+
+    def _excluir(self) -> None:
+        rfqs = list({l.rfq.id: l.rfq for l in self.tabela.selecionados()}.values())
+        if acoes.excluir_rfqs(self.janela, rfqs, "Na aba Controle cada linha é um item: a RFQ sai com todas as "
+                                                 "linhas de item dela."):
             self.atualizar()
 
     def _importar(self) -> None:

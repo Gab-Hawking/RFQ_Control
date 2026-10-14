@@ -53,7 +53,7 @@ class PaginaPacotes(QWidget):
         barra.addWidget(botao("Duplicar", self._duplicar, dica="Cria um novo pacote com os mesmos itens e anexos"))
         barra.addWidget(botao("Agradecimento / status…", self._agradecimento,
                               dica="E-mail de agradecimento / situação do projeto para os fornecedores"))
-        barra.addWidget(botao("Excluir", self._excluir, perigo=True))
+        barra.addWidget(botao("Excluir", self._excluir, perigo=True, dica="Exclui o pacote selecionado (tecla Delete)"))
         layout.addLayout(barra)
 
         divisor = QSplitter(Qt.Orientation.Vertical)
@@ -71,6 +71,7 @@ class PaginaPacotes(QWidget):
             Coluna("Solicitante", self._solicitante, esticar=True),
         ], selecao_multipla=False)
         self.tabela.ativada.connect(lambda p: self._abrir(p))
+        self.tabela.excluir.connect(self._excluir)
         self.tabela.sortByColumn(4, Qt.SortOrder.DescendingOrder)
         self.tabela.selectionModel().selectionChanged.connect(lambda *_: self._mostrar_rfqs())
         self.busca.textChanged.connect(self.tabela.filtro.definir_busca)

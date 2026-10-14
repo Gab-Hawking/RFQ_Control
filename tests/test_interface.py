@@ -6,8 +6,9 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QModelIndex, Qt  # noqa: E402
+from PySide6.QtCore import QModelIndex, QPoint, Qt  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from rfq_control.modelos import Idioma, MetodoEmail, StatusRFQ  # noqa: E402
@@ -270,6 +271,82 @@ def test_aba_controle_mostra_uma_linha_por_item(janela, pacote_exemplo):
     assert len(base.controle.tabela.visiveis()) == 4  # 2 RFQs x 2 itens
 
 
+def test_delete_com_linha_inteira_exclui_na_grade(janela, app, monkeypatch):
+    from rfq_control.ui import pagina_base_dados
+
+    perguntas = []
+    monkeypatch.setattr(pagina_base_dados, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    janela.show()
+    janela.activateWindow()
+    base = janela.ir_para("fornecedores")
+    base.fornecedores.busca.setFocus()
+    grade = base.fornecedores.grade
+    linha = _indice(grade, next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "f3"), "nome").row()
+    cabecalho = grade.verticalHeader()  # clique no número da linha: seleciona a linha inteira e dá o foco à grade
+    meio = cabecalho.sectionViewportPosition(linha) + cabecalho.sectionSize(linha) // 2
+    QTest.mouseClick(cabecalho.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(10, meio))
+    app.processEvents()
+    assert app.focusWidget() is grade and grade.linhas_inteiras()
+    QTest.keyClick(grade, Qt.Key.Key_Delete)
+    assert perguntas == ["Excluir 1 linha(s)?"]
+    assert janela.base.fornecedores.obter("f3") is None
+    assert all(l.id != "f3" for l in grade.modelo.linhas)
+
+
+def test_delete_em_celula_so_limpa_a_celula(janela, monkeypatch):
+    from rfq_control.ui import pagina_base_dados
+
+    monkeypatch.setattr(pagina_base_dados, "confirmar", lambda *a, **k: pytest.fail("não deveria excluir"))
+    base = janela.ir_para("fornecedores")
+    grade = base.fornecedores.grade
+    linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "f1")
+    grade.setFocus()
+    grade.setCurrentIndex(_indice(grade, linha, "email_cc"))
+    QTest.keyClick(grade, Qt.Key.Key_Delete)
+    fornecedor = janela.base.fornecedores.obter("f1")
+    assert fornecedor is not None and not [c for c in fornecedor.contatos if c.copia]
+
+
+def test_delete_na_aba_controle_exclui_a_rfq(janela, pacote_exemplo, monkeypatch):
+    from rfq_control.ui import acoes
+
+    _, rfqs = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1", "f2"])
+    perguntas = []
+    monkeypatch.setattr(acoes, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    base = janela.ir_para("controle")
+    tabela = base.controle.tabela
+    linha = next(r for r in range(tabela.filtro.rowCount())
+                 if tabela.filtro.index(r, 0).data() == rfqs[0].numero)
+    tabela.setFocus()
+    tabela.selectRow(linha)
+    QTest.keyClick(tabela, Qt.Key.Key_Delete)
+    assert perguntas[0].startswith(f"Excluir {rfqs[0].numero}?") and "todas as linhas" in perguntas[0]
+    assert janela.base.rfqs.obter(rfqs[0].id) is None and janela.base.rfqs.obter(rfqs[1].id) is not None
+    assert len(tabela.visiveis()) == 2  # as 2 linhas de item da RFQ excluída saíram
+
+
+def test_delete_na_lista_de_rfqs(janela, pacote_exemplo, monkeypatch, mensagens):
+    from rfq_control.ui import acoes
+
+    _, rfqs = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1", "f2", "f3"])
+    rascunho, enviada, aguardando = rfqs
+    srv.registrar_envio(janela.base, enviada, Idioma.PT, "enviada")
+    srv.registrar_revisao(janela.base, aguardando, Idioma.PT, "aberta para revisão", None)
+    perguntas = []
+    monkeypatch.setattr(acoes, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    pagina = janela.ir_para("rfqs")
+    pagina.tabela.setFocus()
+    pagina.tabela.selectAll()
+    QTest.keyClick(pagina.tabela, Qt.Key.Key_Delete)
+    assert perguntas[0] == f"Excluir {rascunho.numero}?"
+    assert "Marcar como Cancelada" in perguntas[1] and enviada.numero in perguntas[1]
+    assert any(aguardando.numero in texto for _tipo, texto in mensagens)
+    assert janela.base.rfqs.obter(rascunho.id) is None
+    assert janela.base.rfqs.obter(enviada.id).status == StatusRFQ.CANCELADA  # o número fica guardado
+    assert janela.base.rfqs.obter(aguardando.id).aguardando_envio()
+    assert len(pagina.tabela.visiveis()) == 2
+
+
 # ---------------------------------------------------------------- envio de e-mails
 
 
@@ -375,13 +452,13 @@ def test_nova_solicitacao_filtra_por_commodity(com_commodities, app):
 
 
 def test_excluir_rascunhos_oferece_excluir_pacote_vazio(janela, pacote_exemplo, monkeypatch):
-    from rfq_control.ui import pagina_rfqs
+    from rfq_control.ui import acoes
 
     pacote, rfqs = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1", "f2"])
     pagina = janela.ir_para("rfqs")
     pagina.tabela.selectAll()
     perguntas = []
-    monkeypatch.setattr(pagina_rfqs, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    monkeypatch.setattr(acoes, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
     pagina._excluir()
     assert len(perguntas) == 2 and pacote.titulo in perguntas[1]
     assert not len(janela.base.rfqs) and janela.base.pacotes.obter(pacote.id) is None

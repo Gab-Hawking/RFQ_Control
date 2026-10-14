@@ -100,6 +100,64 @@ def alterar_status(janela: JanelaPrincipal, rfqs: list[RFQ]) -> bool:
     return ok
 
 
+def excluir_rfqs(janela: JanelaPrincipal, rfqs: list[RFQ], detalhe: str = "") -> bool:
+    """Exclui as RFQs em rascunho e oferece excluir os pacotes que ficarem vazios.
+
+    As já enviadas não são excluídas (o número voltaria a ser usado e o histórico do envio se perderia): o
+    usuário pode marcá-las como Cancelada. Devolve se alguma RFQ foi excluída ou alterada.
+    """
+    base = janela.base
+    rfqs = [atual for r in rfqs if (atual := base.rfqs.obter(r.id))]
+    if not rfqs:
+        avisar(janela, "Selecione as RFQs que deseja excluir.")
+        return False
+    rascunhos = [r for r in rfqs if r.status == StatusRFQ.RASCUNHO and not r.aguardando_envio()]
+    aguardando = [r.numero for r in rfqs if r.aguardando_envio()]
+    enviadas = [r for r in rfqs if r.status not in (StatusRFQ.RASCUNHO, StatusRFQ.CANCELADA)]
+    canceladas = [r.numero for r in rfqs if r.status == StatusRFQ.CANCELADA]
+    alterou = False
+
+    texto = f"Excluir {', '.join(r.numero for r in rascunhos)}?" + (f"\n\n{detalhe}" if detalhe else "")
+    if rascunhos and confirmar(janela, texto, "Excluir", "Excluir"):
+        excluidas = []
+        for rfq in rascunhos:
+            ok, _ = executar(janela, lambda r=rfq: srv.excluir_rfq(base, r.id))
+            if not ok:
+                break
+            excluidas.append(rfq)
+        if excluidas:
+            alterou = True
+            janela.mensagem(f"{len(excluidas)} RFQ(s) excluída(s).")
+        vazios = srv.pacotes_sem_rfq(base, [r.pacote_id for r in excluidas])
+        if vazios and confirmar(
+            janela,
+            "Estes pacotes ficaram sem nenhuma RFQ:\n• " + "\n• ".join(p.titulo for p in vazios)
+            + "\n\nExcluir também os pacotes (itens e anexos)? Assim eles não aparecem mais em 'Enviar e-mails'.",
+            "Pacotes sem RFQ", "Excluir pacotes",
+        ):
+            for pacote in vazios:
+                executar(janela, lambda p=pacote: srv.excluir_pacote(base, p.id))
+
+    if aguardando:
+        avisar(janela, f"O e-mail de {', '.join(aguardando)} já foi aberto para envio e pode ter saído: não foi "
+                       "excluída. Se o e-mail não foi enviado, use 'Alterar status' → Rascunho e exclua depois.")
+    if enviadas and confirmar(
+        janela,
+        f"{', '.join(r.numero for r in enviadas)}: já enviada(s), não pode(m) ser excluída(s) — o número e o "
+        "histórico do envio ficam guardados.\n\nMarcar como Cancelada?",
+        "RFQs enviadas", "Marcar como Cancelada",
+    ):
+        ok, alteradas = executar(janela, lambda: srv.alterar_status(
+            base, [r.id for r in enviadas], StatusRFQ.CANCELADA, "pedido de exclusão"))
+        if ok and alteradas:
+            alterou = True
+            janela.mensagem(f"{len(alteradas)} RFQ(s) marcada(s) como Cancelada.")
+    if canceladas and not (rascunhos or aguardando or enviadas):
+        informar(janela, f"{', '.join(canceladas)}: já cancelada(s). RFQs canceladas ficam guardadas no histórico "
+                         "e não são excluídas.")
+    return alterou
+
+
 def enviar_emails(
     janela: JanelaPrincipal,
     pacote_id: str | None = None,

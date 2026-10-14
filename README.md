@@ -10,6 +10,11 @@ macros — sem travar, com tudo registrado e com mais recursos.
   Fornecedores, Commodities, Projetos, Solicitantes, Feriados e Corpo do E-mail — abas em cima, logo abaixo
   da descrição. Edite direto nas células (cada linha é salva sozinha; a linha atual fica destacada e a célula
   em edição ganha moldura azul), cole várias linhas do Excel com Ctrl+V, copie com Ctrl+C.
+- **Excluir com o botão ou com a tecla Delete:** nas abas de cadastro, selecione as linhas pelo número à
+  esquerda e tecle Delete (ou *Excluir linhas*) — com só algumas células selecionadas, Delete limpa as células,
+  como no Excel. Na lista de **RFQs** e na aba **Controle**, selecione a linha e tecle Delete (ou *Excluir* /
+  *Excluir RFQ*). Só RFQs em rascunho são apagadas; as já enviadas não podem ser excluídas (o número e o
+  histórico do envio ficam guardados) e o app oferece marcá-las como **Cancelada**.
 - **Commodities:** cada commodity tem o seu **Commodity Buyer** (nome e e-mail). Um fornecedor pode ter
   várias commodities. Nos e-mails, o buyer da commodity do pacote (ou das commodities do fornecedor) vai em
   cópia, junto com os **E-mails Supplier (Cc)** do fornecedor.
@@ -78,7 +83,7 @@ executável no Windows. Em **Actions → Testes e executável → (última execu
 
 Atalhos: `Ctrl+N` nova solicitação · `Ctrl+B` Base de dados · na lista de RFQs: `Ctrl+R` enviar e-mails
 (escolher fornecedores) e `Ctrl+E` gerar o e-mail das RFQs selecionadas · `Ctrl+F` buscar · `Enter` abrir ·
-`F5` atualizar.
+`Delete` excluir as linhas selecionadas · `F5` atualizar.
 
 ## Desenvolvimento
 
