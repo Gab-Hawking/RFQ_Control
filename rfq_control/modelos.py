@@ -290,6 +290,7 @@ class Condicao(Registro):
 
 
 class Item(Modelo):
+    id: str = ""  # identifica o item no pacote (a cotação por item de cada RFQ aponta para ele)
     ref_op: str = ""
     ref_cdc: str = ""
     descricao: str = ""
@@ -301,6 +302,12 @@ class Item(Modelo):
         return not any(
             [self.ref_op, self.ref_cdc, self.descricao, self.unidade]
         ) and self.quantidade is None and self.volume_anual is None
+
+    def peso(self) -> float:
+        """Multiplicador do preço no comparativo: volume anual; sem ele, a quantidade; sem ela, 1."""
+        if self.volume_anual is not None:
+            return self.volume_anual
+        return self.quantidade if self.quantidade is not None else 1.0
 
 
 class Pacote(Registro):
@@ -314,11 +321,53 @@ class Pacote(Registro):
     observacoes: str = ""
     itens: list[Item] = []
     anexos: list[str] = []
+    # comparativo de propostas: moeda (vazia = moeda padrão) e câmbio de cada outra moeda para ela
+    moeda_comparativo: str = ""
+    cambios: dict[str, float] = {}
+
+    @model_validator(mode="after")
+    def _identificar_itens(self) -> Pacote:
+        """Itens sem id: de pacotes até a v0.4 (todos sem id) recebem i1, i2… pela posição — o mesmo id a
+        cada leitura até o pacote ser gravado; itens novos num pacote que já tem ids recebem um id novo."""
+        if not any(not i.id for i in self.itens):
+            return self
+        legado = all(not i.id for i in self.itens)
+        for posicao, item in enumerate(self.itens, start=1):
+            if not item.id:
+                item.id = f"i{posicao}" if legado else novo_id()
+        return self
+
+    @field_validator("cambios")
+    @classmethod
+    def _validar_cambios(cls, valor: dict[str, float]) -> dict[str, float]:
+        if any(taxa <= 0 for taxa in valor.values()):
+            raise ValueError("o câmbio deve ser maior que zero")
+        return {moeda.strip().upper(): taxa for moeda, taxa in valor.items() if moeda.strip()}
 
 
 class Evento(Modelo):
     data_hora: datetime = Field(default_factory=agora)
     descricao: str
+
+
+class CotacaoItem(Modelo):
+    """Resposta do fornecedor para um item do pacote (valores unitários, na moeda da RFQ)."""
+
+    item_id: str
+    preco: float | None = Field(default=None, ge=0)  # preço unitário da peça
+    ferramental: float | None = Field(default=None, ge=0)  # tooling (valor total do item)
+    lead_time_dias: int | None = Field(default=None, ge=0)
+    frete: float | None = Field(default=None, ge=0)  # por peça
+    embalagem: float | None = Field(default=None, ge=0)  # por peça
+
+    def vazia(self) -> bool:
+        return all(v is None for v in (self.preco, self.ferramental, self.lead_time_dias, self.frete, self.embalagem))
+
+    def custo_unitario(self) -> float | None:
+        """Preço + frete + embalagem por peça (None se não houver preço)."""
+        if self.preco is None:
+            return None
+        return self.preco + (self.frete or 0) + (self.embalagem or 0)
 
 
 class RFQ(Registro):
@@ -336,6 +385,8 @@ class RFQ(Registro):
     valor_total: float | None = Field(default=None, ge=0)
     moeda: str = "BRL"
     lead_time: str = ""
+    validade: date | None = None  # validade da proposta
+    cotacao: list[CotacaoItem] = []  # cotação por item (comparativo de propostas)
     observacoes: str = ""
     # E-mail aberto para revisão em: a RFQ só passa a Enviada quando o envio é confirmado.
     aguardando_envio_desde: datetime | None = None
@@ -357,6 +408,9 @@ class RFQ(Registro):
 
     def registrar(self, descricao: str) -> None:
         self.historico.append(Evento(descricao=descricao))
+
+    def cotacao_do_item(self, item_id: str) -> CotacaoItem | None:
+        return next((c for c in self.cotacao if c.item_id == item_id), None)
 
 
 # ---------------------------------------------------------------- configurações

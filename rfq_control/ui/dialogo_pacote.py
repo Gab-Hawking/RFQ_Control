@@ -81,6 +81,8 @@ class TabelaItens(QTableWidget):
             if campo in _NUMERICAS:
                 celula.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.setItem(linha, coluna, celula)
+        # o id do item fica na linha: a cotação por item das RFQs continua ligada a ele depois da edição
+        self.item(linha, 0).setData(Qt.ItemDataRole.UserRole, item.id if item else "")
         return linha
 
     def remover_selecionadas(self) -> None:
@@ -127,7 +129,8 @@ class TabelaItens(QTableWidget):
                     dados[campo] = numero
                 else:
                     dados[campo] = texto
-            item = Item(**dados)
+            primeira = self.item(linha, 0)
+            item = Item(id=(primeira.data(Qt.ItemDataRole.UserRole) or "") if primeira else "", **dados)
             if not item.vazio():
                 itens.append(item)
         return itens

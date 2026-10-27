@@ -732,3 +732,100 @@ def test_excluir_commodity_avisa_que_sai_dos_fornecedores(com_commodities, app, 
     assert "sai de 1 fornecedor" in perguntas[0]
     assert com_commodities.base.commodities.obter("c1") is None
     assert com_commodities.base.fornecedores.obter("f1").commodity_ids == []
+
+
+# ---------------------------------------------------------------- Fase 3: cotação por item e comparativo
+
+
+@pytest.fixture
+def propostas(janela, pacote_exemplo):
+    """Pacote com dois itens enviado a f1 e f2 (enviadas, sem cotação ainda)."""
+    pacote, rfqs = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1", "f2"])
+    for rfq in rfqs:
+        srv.registrar_envio(janela.base, rfq, rfq.idioma, "enviada", date(2026, 9, 1))
+    return pacote, [janela.base.rfqs.obter(r.id) for r in rfqs]
+
+
+def test_cotacao_colada_na_rfq_e_gravada(janela, propostas, mensagens):
+    from rfq_control.ui.dialogo_rfq import DialogoRFQ
+    from rfq_control.ui.tabela_cotacao import TabelaCotacao
+
+    _, (um, _dois) = propostas
+    dialogo = DialogoRFQ(janela, um)
+    tabela: TabelaCotacao = dialogo.tabela_cotacao
+    assert tabela.rowCount() == 2 and not tabela.item(0, 1).flags() & Qt.ItemFlag.ItemIsEditable
+    tabela.setCurrentCell(0, 1)  # numa coluna do item: a colagem começa no preço
+    assert tabela.colar("10,50\t1.200\t6 semanas\t0,5\t0,25\n4\t\t30\n9\t9\t9\n") == 2  # linha a mais: ignorada
+    assert "2 de 2 item(ns) com preço" in dialogo.totais.text()
+    dialogo.validade.definir(date(2026, 12, 31))
+    dialogo._salvar()
+    salva = janela.base.rfqs.obter(um.id)
+    assert [(c.preco, c.ferramental, c.lead_time_dias, c.frete, c.embalagem) for c in salva.cotacao] == [
+        (10.5, 1200, 42, 0.5, 0.25), (4, None, 30, None, None)]
+    assert salva.status == StatusRFQ.RESPONDIDA and salva.validade == date(2026, 12, 31)
+
+    dialogo = DialogoRFQ(janela, salva)
+    assert dialogo.tabela_cotacao.item(0, 6).text() == "10,50"
+    dialogo.tabela_cotacao.item(1, 6).setText("abc")
+    assert "não é um número válido" in dialogo.totais.text()
+    dialogo._salvar()
+    assert "Item 2, Preço unit." in mensagens[-1][1]  # erro claro e nada gravado
+    assert janela.base.rfqs.obter(um.id).cotacao == salva.cotacao
+
+
+def test_comparativo_pela_pagina_de_pacotes(janela, propostas, monkeypatch, mensagens):
+    from rfq_control.modelos import CotacaoItem
+    from rfq_control.ui import dialogo_comparativo
+    from rfq_control.ui.dialogo_comparativo import DialogoComparativo
+
+    pacote, (um, dois) = propostas
+    a, b = janela.base.pacotes.obter(pacote.id).itens[:2]
+    for rfq, precos, moeda in ((um, (10, 4), "BRL"), (dois, (1, 1), "USD")):
+        cotacao = [CotacaoItem(item_id=a.id, preco=precos[0]), CotacaoItem(item_id=b.id, preco=precos[1])]
+        srv.salvar_rfq(janela.base, rfq.model_copy(update={"cotacao": cotacao, "moeda": moeda}), carregada=rfq)
+
+    dialogo = DialogoComparativo(janela, pacote.id)
+    assert dialogo.resumo.rowCount() == 2 and "Informe o câmbio de USD" in dialogo.aviso.text()
+    assert list(dialogo.campos_cambio) == ["USD"]
+    dialogo.campos_cambio["USD"].setValue(5)
+    dialogo._aplicar_cambio()
+    assert janela.base.pacotes.obter(pacote.id).cambios == {"USD": 5.0} and dialogo.aviso.isHidden()
+    # 2 colunas por item fixas + 3 por proposta; o menor custo das peças fica em destaque
+    assert dialogo.itens.columnCount() == 4 + 3 * 2
+    # f1: 10 × 2 + 4 × 154.000 BRL; f2: (1 × 2 + 1 × 154.000) USD × 5 — o menor custo das peças é o de f1
+    linha_um = next(l for l in range(2) if dialogo.resumo.item(l, 0).text() == um.numero)
+    linha_dois = 1 - linha_um
+    assert dialogo.resumo.item(linha_um, 6).background().color() == dialogo_comparativo.FUNDO_MELHOR
+    assert dialogo.resumo.item(linha_dois, 6).text() == "770.010,00"
+
+    dialogo.resumo.selectRow(linha_dois)
+    monkeypatch.setattr(dialogo_comparativo, "confirmar", lambda *a, **k: True)
+    dialogo._vencedora()
+    assert janela.base.rfqs.obter(dois.id).status == StatusRFQ.SELECIONADA
+    assert janela.base.rfqs.obter(um.id).status == StatusRFQ.NAO_SELECIONADA
+
+    pagina = janela.ir_para("pacotes")
+    titulos = [pagina.rfqs.model().headerData(i, Qt.Orientation.Horizontal) for i in range(pagina.rfqs.model().columnCount())]
+    assert "Itens cotados" in titulos and "Validade" in titulos
+
+
+def test_editar_pacote_mantem_o_id_dos_itens(janela, propostas):
+    from rfq_control.ui.dialogo_pacote import DialogoPacote
+
+    pacote, _ = propostas
+    ids = [i.id for i in janela.base.pacotes.obter(pacote.id).itens]
+    dialogo = DialogoPacote(janela, janela.base.pacotes.obter(pacote.id))
+    dialogo.tabela_itens.item(0, 2).setText("descrição nova")
+    dialogo.tabela_itens.adicionar_linha()
+    dialogo.tabela_itens.item(2, 0).setText("PECA C")
+    dialogo._salvar()
+    itens = janela.base.pacotes.obter(pacote.id).itens
+    assert [i.id for i in itens[:2]] == ids and itens[0].descricao == "descrição nova"
+    assert itens[2].id and itens[2].id not in ids
+
+
+def test_painel_mostra_o_scorecard(janela, app):
+    pagina = janela.ir_para("painel")
+    modelo = pagina.fornecedores.model()
+    titulos = [modelo.headerData(i, Qt.Orientation.Horizontal) for i in range(modelo.columnCount())]
+    assert titulos[-3:] == ["No prazo", "Menor preço", "Selecionadas"]

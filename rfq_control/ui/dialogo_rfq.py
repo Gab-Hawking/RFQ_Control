@@ -26,14 +26,13 @@ from ..servicos import rfq as srv
 from ..servicos.condicoes import condicoes_aplicaveis
 from ..servicos.dias_uteis import dias_uteis_entre
 from ..servicos.email_rfq import destinatarios
-from ..servicos.formatos import data_curta, data_por_extenso, numero_br
+from ..servicos.formatos import data_curta, data_por_extenso, numero_br, valor_monetario
 from . import estilo
-from .componentes import CampoData, Coluna, Tabela, botao, confirmar, executar
+from .componentes import MOEDAS, CampoData, Coluna, Tabela, botao, confirmar, executar
+from .tabela_cotacao import TabelaCotacao
 
 if TYPE_CHECKING:
     from .janela_principal import JanelaPrincipal
-
-MOEDAS = ["BRL", "USD", "EUR", "ARS", "CNY", "JPY", "MXN", "GBP"]
 
 
 class DialogoRFQ(QDialog):
@@ -44,7 +43,7 @@ class DialogoRFQ(QDialog):
         self.rfq = rfq
         self.alterou = False
         self.setWindowTitle(f"RFQ {rfq.numero}")
-        self.resize(900, 640)
+        self.resize(1240, 720)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -81,19 +80,6 @@ class DialogoRFQ(QDialog):
         self.data_envio = CampoData()
         self.prazo = CampoData()
         self.data_resposta = CampoData()
-        self.valor = QDoubleSpinBox()
-        self.valor.setRange(0, 1e12)
-        self.valor.setDecimals(2)
-        self.valor.setGroupSeparatorShown(True)
-        self.valor.setSpecialValueText("—")
-        self.moeda = QComboBox()
-        self.moeda.setEditable(True)
-        self.moeda.addItems(MOEDAS)
-        linha_valor = QHBoxLayout()
-        linha_valor.addWidget(self.valor, 1)
-        linha_valor.addWidget(self.moeda)
-        self.lead_time = QLineEdit()
-        self.lead_time.setPlaceholderText("ex.: 12 semanas")
         self.observacoes = QPlainTextEdit()
         self.observacoes.setFixedHeight(90)
         formulario.addRow("Status", self.status)
@@ -101,10 +87,60 @@ class DialogoRFQ(QDialog):
         formulario.addRow("Data de envio", self.data_envio)
         formulario.addRow("Prazo de resposta", self.prazo)
         formulario.addRow("Data da resposta", self.data_resposta)
-        formulario.addRow("Valor total cotado", linha_valor)
-        formulario.addRow("Lead time", self.lead_time)
         formulario.addRow("Observações", self.observacoes)
         abas.addTab(acompanhamento, "Acompanhamento")
+
+        # ------------------------------------------------ cotação (resposta do fornecedor)
+        aba_cotacao = QWidget()
+        cotacao_layout = QVBoxLayout(aba_cotacao)
+        cabecalho_cotacao = QHBoxLayout()
+        dados_proposta = QFormLayout()
+        self.moeda = QComboBox()
+        self.moeda.setEditable(True)
+        self.moeda.addItems(MOEDAS)
+        self.moeda.setToolTip("Moeda de todos os valores desta proposta")
+        self.validade = CampoData()
+        self.validade.setToolTip("Até quando a proposta do fornecedor vale")
+        dados_proposta.addRow("Moeda", self.moeda)
+        dados_proposta.addRow("Validade da proposta", self.validade)
+        cabecalho_cotacao.addLayout(dados_proposta)
+        cabecalho_cotacao.addSpacing(24)
+        totais_proposta = QFormLayout()
+        self.valor = QDoubleSpinBox()
+        self.valor.setRange(0, 1e12)
+        self.valor.setDecimals(2)
+        self.valor.setGroupSeparatorShown(True)
+        self.valor.setSpecialValueText("—")
+        self.valor.setToolTip("Valor total informado pelo fornecedor (opcional; aparece na lista de RFQs)")
+        self.lead_time = QLineEdit()
+        self.lead_time.setPlaceholderText("ex.: 12 semanas")
+        self.lead_time.setToolTip("Lead time geral da proposta (texto livre)")
+        totais_proposta.addRow("Valor total cotado", self.valor)
+        totais_proposta.addRow("Lead time geral", self.lead_time)
+        cabecalho_cotacao.addLayout(totais_proposta, 1)
+        cotacao_layout.addLayout(cabecalho_cotacao)
+        dica_cotacao = QLabel(
+            "Digite ou cole do Excel (Ctrl+V) o preço unitário, o ferramental, o lead time (dias — ou '6 semanas'), "
+            "o frete e a embalagem por peça de cada item. Ao salvar a primeira cotação de uma RFQ enviada, ela "
+            "passa a Respondida."
+        )
+        dica_cotacao.setObjectName("dica")
+        dica_cotacao.setWordWrap(True)
+        cotacao_layout.addWidget(dica_cotacao)
+        self.tabela_cotacao = TabelaCotacao()
+        self.tabela_cotacao.alterada.connect(self._atualizar_totais)
+        self.moeda.currentTextChanged.connect(lambda _t: self._atualizar_totais())
+        cotacao_layout.addWidget(self.tabela_cotacao, 1)
+        linha_cotacao = QHBoxLayout()
+        self.totais = QLabel()
+        self.totais.setObjectName("dica")
+        linha_cotacao.addWidget(self.totais, 1)
+        linha_cotacao.addWidget(botao("Colar do Excel", lambda: self.tabela_cotacao.colar(),
+                                      dica="Cola a partir da célula selecionada (ou do preço do item selecionado)"))
+        linha_cotacao.addWidget(botao("Comparativo do pacote…", self._comparativo,
+                                      dica="Fornecedores do mesmo pacote lado a lado"))
+        cotacao_layout.addLayout(linha_cotacao)
+        self.indice_aba_cotacao = abas.addTab(aba_cotacao, "Cotação")
 
         aba_itens = QWidget()
         itens_layout = QVBoxLayout(aba_itens)
@@ -219,9 +255,12 @@ class DialogoRFQ(QDialog):
         self.valor.setValue(rfq.valor_total or 0)
         self.moeda.setCurrentText(rfq.moeda)
         self.lead_time.setText(rfq.lead_time)
+        self.validade.definir(rfq.validade)
         self.observacoes.setPlainText(rfq.observacoes)
 
         itens = pacote.itens if pacote else []
+        self.tabela_cotacao.definir(itens, rfq.cotacao)
+        self._atualizar_totais()
         self.tabela_itens.definir(itens)
         self.abas.setTabText(self.indice_aba_itens, f"Itens ({len(itens)})")
         self.historico.clear()
@@ -250,14 +289,45 @@ class DialogoRFQ(QDialog):
             "valor_total": self.valor.value() or None,
             "moeda": self.moeda.currentText().strip().upper() or "BRL",
             "lead_time": self.lead_time.text().strip(),
+            "validade": self.validade.valor(),
+            "cotacao": [c.model_dump() for c in self.tabela_cotacao.cotacao()],
             "observacoes": self.observacoes.toPlainText().strip(),
         })
 
     def _tem_alteracoes(self) -> bool:
-        campos = ["status", "idioma", "data_envio", "prazo", "data_resposta", "valor_total", "moeda",
-                  "lead_time", "observacoes"]
-        novo = self._dados_formulario()
-        return any(getattr(novo, c) != getattr(self.rfq, c) for c in campos)
+        try:
+            novo = self._dados_formulario()
+        except srv.ErroNegocio:
+            return True  # valor inválido na cotação: salvar mostra o erro
+        return any(getattr(novo, c) != getattr(self.rfq, c) for c in srv.CAMPOS_EDITAVEIS)
+
+    def _atualizar_totais(self) -> None:
+        pacote = self.base.pacotes.obter(self.rfq.pacote_id)
+        itens = pacote.itens if pacote else []
+        try:
+            cotacao = {c.item_id: c for c in self.tabela_cotacao.cotacao()}
+        except srv.ErroNegocio as erro:
+            self.totais.setText(f"<span style='color:{estilo.CRITICO}'>{erro}</span>")
+            return
+        moeda = self.moeda.currentText().strip().upper()
+        com_preco = [(i, cotacao[i.id]) for i in itens if i.id in cotacao and cotacao[i.id].preco is not None]
+        pecas = sum(c.custo_unitario() * i.peso() for i, c in com_preco)
+        ferramental = sum(c.ferramental or 0 for c in cotacao.values())
+        self.totais.setText(
+            f"{len(com_preco)} de {len(itens)} item(ns) com preço · custo das peças (× volume anual ou qtd.): "
+            f"{moeda} {valor_monetario(pecas)} · ferramental: {moeda} {valor_monetario(ferramental)}"
+        )
+
+    def _comparativo(self) -> None:
+        from .dialogo_comparativo import DialogoComparativo
+
+        if not self._gravar_se_alterado():
+            return
+        dialogo = DialogoComparativo(self.janela, self.rfq.pacote_id, self)
+        dialogo.exec()
+        if dialogo.alterou:
+            self.alterou = True
+            self._carregar()
 
     def _gravar_se_alterado(self) -> bool:
         if not self._tem_alteracoes():

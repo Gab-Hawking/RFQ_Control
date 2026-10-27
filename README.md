@@ -53,14 +53,23 @@ macros — sem travar, com tudo registrado e com mais recursos.
   (`RFQ2026001`, `RFQ2026002`…) e a tela de envio já aberta.
 - **Acompanhamento:** situação de cada RFQ (Rascunho, Aguardando envio, Enviada, **Atrasada**, Respondida,
   Declinada, Selecionada…), prazo gravado, valor cotado, lead time e histórico completo.
+- **Cotação por item** (aba *Cotação* da RFQ): moeda e validade da proposta e, para cada item do pacote,
+  **preço unitário, ferramental, lead time** (dias — ou "6 semanas"), **frete e embalagem por peça** — digitados
+  ou colados do Excel (Ctrl+V). A primeira cotação de uma RFQ enviada a passa para **Respondida**.
+- **Comparativo de propostas** (*Pacotes de cotação → Comparar propostas…*, ou na RFQ): fornecedores lado a
+  lado, convertidos para a moeda do comparativo (câmbio informado na tela e guardado no pacote). Destaca em
+  verde o menor custo unitário (preço + frete + embalagem), ferramental e lead time de cada item e, entre as
+  propostas completas, o menor **custo das peças** (custo unitário × volume anual — ou quantidade), ferramental
+  e lead time. Dali se escolhe a **vencedora** e se exporta o comparativo para Excel.
 - **Cobrança na mesma conversa:** a cobrança **responde ao e-mail da RFQ** nos Itens Enviados do Outlook
   (sem o original, sai um "RE:" com a solicitação original citada).
 - **Agradecimento / status do projeto:** escolha o projeto (ex.: declinado), todas as RFQs enviadas já vêm
   marcadas e cada fornecedor recebe um e-mail no seu idioma agradecendo e informando a situação — com opção
   de mudar o status das RFQs (ex.: Cancelada).
-- **Painel:** RFQs em aberto, atrasadas, vencendo, taxa e tempo médio de resposta, RFQs por mês e
-  desempenho por fornecedor.
-- **Importação da planilha antiga** (menos de 1 segundo) e **exportação para Excel**.
+- **Painel:** RFQs em aberto, atrasadas, vencendo, taxa e tempo médio de resposta, RFQs por mês e o
+  **scorecard dos fornecedores** — taxa de resposta, tempo médio, **pontualidade** (respostas até o prazo),
+  **menor preço** (vezes com o menor custo das peças nos comparativos) e RFQs selecionadas.
+- **Importação da planilha antiga** (menos de 1 segundo) e **exportação para Excel** (com a cotação por item).
 
 ## Estrutura
 

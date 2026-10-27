@@ -50,6 +50,8 @@ class PaginaPacotes(QWidget):
         barra.addWidget(botao("Abrir / editar", self._editar))
         barra.addWidget(botao("Enviar e-mails…", self._enviar,
                               dica="Escolher os fornecedores que vão receber esta RFQ"))
+        barra.addWidget(botao("Comparar propostas…", self._comparar,
+                              dica="Fornecedores lado a lado: preço, ferramental, lead time; escolha da vencedora"))
         barra.addWidget(botao("Duplicar", self._duplicar, dica="Cria um novo pacote com os mesmos itens e anexos"))
         barra.addWidget(botao("Agradecimento / status…", self._agradecimento,
                               dica="E-mail de agradecimento / situação do projeto para os fornecedores"))
@@ -91,7 +93,9 @@ class PaginaPacotes(QWidget):
             Coluna("Resposta", lambda r: r.data_resposta, largura=95),
             Coluna("Valor", lambda r: r.valor_total, largura=130, alinhamento=Qt.AlignmentFlag.AlignRight,
                    formato=lambda v: "" if v is None else numero_br(v, 2)),
-            Coluna("Moeda", lambda r: r.moeda if r.valor_total is not None else "", largura=65),
+            Coluna("Moeda", lambda r: r.moeda if r.valor_total is not None or r.cotacao else "", largura=65),
+            Coluna("Itens cotados", self._itens_cotados, largura=110, alinhamento=Qt.AlignmentFlag.AlignRight),
+            Coluna("Validade", lambda r: r.validade, largura=95),
             Coluna("Lead time", lambda r: r.lead_time, esticar=True),
         ])
         self.rfqs.setItemDelegateForColumn(2, DelegadoSituacao(self.rfqs))
@@ -111,6 +115,13 @@ class PaginaPacotes(QWidget):
         respondidas = sum(1 for r in rfqs if r.status in STATUS_COM_RESPOSTA)
         abertas = sum(1 for r in rfqs if r.status == StatusRFQ.ENVIADA)
         return len(rfqs), respondidas, abertas
+
+    def _itens_cotados(self, rfq) -> str:
+        if not rfq.cotacao:
+            return ""
+        pacote = self.base.pacotes.obter(rfq.pacote_id)
+        com_preco = sum(1 for c in rfq.cotacao if c.preco is not None)
+        return f"{com_preco}/{len(pacote.itens) if pacote else '?'}"
 
     def _fornecedor(self, rfq) -> str:
         fornecedor = self.base.fornecedores.obter(rfq.fornecedor_id)
@@ -154,6 +165,11 @@ class PaginaPacotes(QWidget):
     def _enviar(self) -> None:
         pacote = self.tabela.atual()
         if acoes.enviar_emails(self.janela, pacote.id if pacote else None):
+            self.atualizar()
+
+    def _comparar(self) -> None:
+        pacote = self.tabela.atual()
+        if acoes.comparar_propostas(self.janela, pacote.id if pacote else None):
             self.atualizar()
 
     def _abrir_rfq(self, rfq) -> None:
