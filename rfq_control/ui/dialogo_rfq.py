@@ -151,8 +151,9 @@ class DialogoRFQ(QDialog):
             Coluna("Unidade", lambda i: i.unidade, largura=70),
             Coluna("Quantidade", lambda i: i.quantidade, largura=95, alinhamento=Qt.AlignmentFlag.AlignRight,
                    formato=numero_br),
-            Coluna("Volume anual", lambda i: i.volume_anual, largura=105, alinhamento=Qt.AlignmentFlag.AlignRight,
-                   formato=numero_br),
+            Coluna("Volume anual", lambda i: i.volume_medio(), largura=105, alinhamento=Qt.AlignmentFlag.AlignRight,
+                   formato=numero_br, dica=lambda i: "Média dos volumes por ano" if i.volumes else ""),
+            Coluna("Volumes por ano", self._volumes_por_ano, largura=260),
         ])
         itens_layout.addWidget(self.tabela_itens)
         linha = QHBoxLayout()
@@ -266,6 +267,10 @@ class DialogoRFQ(QDialog):
         self.historico.clear()
         for evento in reversed(rfq.historico):
             self.historico.addItem(f"{data_curta(evento.data_hora)}   {evento.descricao}")
+
+    def _volumes_por_ano(self, item) -> str:
+        anos = srv.anos_do_pacote(self.base, self.base.pacotes.obter(self.rfq.pacote_id))
+        return " · ".join(f"{ano}: {numero_br(v)}" for ano, v in zip(anos, item.volumes) if v is not None)
 
     def _copia(self, fornecedor, pacote) -> str:
         """Cc do e-mail: Supplier (Cc) + Commodity Buyer + cópia padrão."""

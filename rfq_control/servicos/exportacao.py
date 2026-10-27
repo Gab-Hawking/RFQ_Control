@@ -12,6 +12,7 @@ from openpyxl.utils import get_column_letter
 from ..armazenamento import BaseDados
 from ..modelos import RFQ
 from .cotacao import comparar
+from .rfq import anos_do_pacote
 
 _CABECALHO = Font(bold=True, color="FFFFFF")
 _FUNDO = PatternFill("solid", fgColor="1F4E79")
@@ -45,7 +46,7 @@ def exportar_rfqs(base: BaseDados, destino: Path, rfqs: list[RFQ] | None = None,
     aba_itens.append([
         "RFQ Nº", "Data de envio", "Cliente", "Projeto", "Fornecedor", "OP - Ref", "CDC - Ref",
         "Descrição", "Unidade", "Quantidade", "Volume anual", "Moeda", "Preço unitário", "Ferramental",
-        "Lead time (dias)", "Frete", "Embalagem", "Situação",
+        "Lead time (dias)", "Frete", "Embalagem", "Situação", "Volumes por ano",
     ])
 
     for rfq in rfqs:
@@ -62,14 +63,16 @@ def exportar_rfqs(base: BaseDados, destino: Path, rfqs: list[RFQ] | None = None,
             pacote.titulo if pacote else "", len(pacote.itens) if pacote else 0, rfq.valor_total, rfq.moeda,
             rfq.lead_time, rfq.validade, rfq.observacoes,
         ])
+        anos = anos_do_pacote(base, pacote)
         for item in pacote.itens if pacote else []:
             cotacao = rfq.cotacao_do_item(item.id)
+            volumes = "; ".join(f"{ano}: {v:g}" for ano, v in zip(anos, item.volumes) if v is not None)
             valores = ([cotacao.preco, cotacao.ferramental, cotacao.lead_time_dias, cotacao.frete, cotacao.embalagem]
                        if cotacao else [None] * 5)
             aba_itens.append([
                 rfq.numero, rfq.data_envio, cliente, nome_projeto, nome_fornecedor,
-                item.ref_op, item.ref_cdc, item.descricao, item.unidade, item.quantidade, item.volume_anual,
-                rfq.moeda if cotacao else "", *valores, situacao,
+                item.ref_op, item.ref_cdc, item.descricao, item.unidade, item.quantidade, item.volume_medio(),
+                rfq.moeda if cotacao else "", *valores, situacao, volumes,
             ])
 
     for aba, colunas in ((aba_rfqs, "CDEP"), (aba_itens, "B")):
@@ -86,7 +89,7 @@ def exportar_rfqs(base: BaseDados, destino: Path, rfqs: list[RFQ] | None = None,
             celula.number_format = _FORMATO_VALOR
 
     _formatar_aba(aba_rfqs, [14, 15, 13, 13, 13, 28, 16, 18, 30, 8, 34, 10, 14, 8, 14, 13, 40])
-    _formatar_aba(aba_itens, [14, 13, 16, 28, 30, 36, 44, 30, 10, 13, 14, 8, 14, 14, 10, 12, 12, 15])
+    _formatar_aba(aba_itens, [14, 13, 16, 28, 30, 36, 44, 30, 10, 13, 14, 8, 14, 14, 10, 12, 12, 15, 40])
     destino = Path(destino)
     destino.parent.mkdir(parents=True, exist_ok=True)
     livro.save(destino)
@@ -135,7 +138,7 @@ def exportar_comparativo(base: BaseDados, pacote_id: str, destino: Path) -> Path
                       f"{nome} — lead time (dias)"]
     itens.append(cabecalho)
     for posicao, item in enumerate(comparativo.itens, start=1):
-        valores: list = [posicao, item.ref_op, item.ref_cdc, item.descricao, item.quantidade, item.volume_anual]
+        valores: list = [posicao, item.ref_op, item.ref_cdc, item.descricao, item.quantidade, item.volume_medio()]
         destaques = []
         for proposta in comparativo.propostas:
             cotacao = proposta.item(item.id)

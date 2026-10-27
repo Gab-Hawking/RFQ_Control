@@ -15,7 +15,9 @@ from ..modelos import (
     STATUS_COM_RESPOSTA,
     CotacaoItem,
     Idioma,
+    Item,
     Pacote,
+    Projeto,
     StatusRFQ,
     agora,
 )
@@ -51,6 +53,22 @@ def prazo_para(base: BaseDados, pacote: Pacote, inicio: date | None = None) -> d
     return somar_dias_uteis(inicio, pacote.prazo_dias_uteis, base.datas_feriados())
 
 
+def rotulos_anos(projeto: Projeto | None) -> list[str]:
+    """Anos dos volumes (um por ano de lifetime): o ano-calendário a partir do SOP (Y1 = ano do SOP) ou Y1…Yn."""
+    if projeto is None or not projeto.lifetime_anos:
+        return []
+    if projeto.sop:
+        return [str(projeto.sop.year + i) for i in range(projeto.lifetime_anos)]
+    return [f"Y{i + 1}" for i in range(projeto.lifetime_anos)]
+
+
+def anos_do_pacote(base: BaseDados, pacote: Pacote | None) -> list[str]:
+    """Rótulos dos volumes por ano do pacote (vazio se o pacote não usa volumes por ano)."""
+    if pacote is None or not pacote.volumes_por_ano:
+        return []
+    return rotulos_anos(base.projetos.obter(pacote.projeto_id))
+
+
 def _validar_pacote(base: BaseDados, pacote: Pacote) -> Pacote:
     if not base.projetos.obter(pacote.projeto_id):
         raise ErroNegocio("Selecione um projeto válido para o pacote.")
@@ -59,6 +77,14 @@ def _validar_pacote(base: BaseDados, pacote: Pacote) -> Pacote:
     itens = [i for i in pacote.itens if not i.vazio()]
     if not itens:
         raise ErroNegocio("Inclua pelo menos um item no pacote.")
+    if pacote.volumes_por_ano:
+        anos = len(rotulos_anos(base.projetos.obter(pacote.projeto_id)))
+        if not anos:
+            raise ErroNegocio("Para usar volumes por ano, informe o Lifetime (anos) do projeto.")
+        itens = [i.model_copy(update={"volumes": Item.model_validate({"volumes": i.volumes[:anos]}).volumes})
+                 for i in itens]
+    else:
+        itens = [i.model_copy(update={"volumes": []}) if i.volumes else i for i in itens]
     pacote = pacote.model_copy(update={"itens": itens})
     if not pacote.titulo:
         projeto = base.projetos.obter(pacote.projeto_id)
@@ -132,6 +158,7 @@ def duplicar_pacote(base: BaseDados, pacote_id: str) -> Pacote:
         projeto_id=original.projeto_id,
         commodity_id=original.commodity_id,
         prazo_dias_uteis=original.prazo_dias_uteis,
+        volumes_por_ano=original.volumes_por_ano,
         observacoes=original.observacoes,
         itens=[i.model_copy() for i in original.itens],
     )

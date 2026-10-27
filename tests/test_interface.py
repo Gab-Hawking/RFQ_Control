@@ -829,3 +829,30 @@ def test_painel_mostra_o_scorecard(janela, app):
     modelo = pagina.fornecedores.model()
     titulos = [modelo.headerData(i, Qt.Orientation.Horizontal) for i in range(modelo.columnCount())]
     assert titulos[-3:] == ["No prazo", "Menor preço", "Selecionadas"]
+
+
+def test_volumes_por_ano_na_nova_solicitacao(janela, app):
+    from rfq_control.ui.dialogo_pacote import DialogoPacote
+
+    base = janela.base
+    base.projetos.salvar(base.projetos.obter("prj2").model_copy(update={"sop": date(2027, 1, 1), "lifetime_anos": 2}))
+    dialogo = DialogoPacote(janela)
+    tabela = dialogo.tabela_itens
+    dialogo.projeto.setCurrentIndex(dialogo.projeto.findData("prj1"))  # sem lifetime
+    assert not dialogo.volumes_por_ano.isEnabled()
+    dialogo.projeto.setCurrentIndex(dialogo.projeto.findData("prj2"))
+    assert dialogo.volumes_por_ano.isEnabled()
+    tabela.item(0, 0).setText("PECA A")
+    tabela.item(0, 5).setText("500")  # volume anual
+    dialogo.volumes_por_ano.setChecked(True)
+    titulos = [tabela.horizontalHeaderItem(i).text() for i in range(tabela.columnCount())]
+    assert titulos[-2:] == ["EAU 2027", "EAU 2028"] and "Volume anual" not in titulos
+    tabela.item(0, 5).setText("1.000")
+    tabela.item(0, 6).setText("2.000")
+    dialogo.volumes_por_ano.setChecked(False)  # o volume anual volta; os anos ficam guardados na linha
+    assert tabela.item(0, 5).text() == "500"
+    dialogo.volumes_por_ano.setChecked(True)
+    assert tabela.item(0, 6).text() == "2.000"
+    [item] = tabela.itens()
+    assert item.volumes == [1000, 2000]
+    dialogo.reject()

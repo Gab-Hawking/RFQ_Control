@@ -82,6 +82,9 @@ O CI (`.github/workflows/build.yml`) roda os testes no Linux e no Windows e publ
   guarda `cotacao` (`CotacaoItem` por `item_id`: preço, ferramental, lead time em dias, frete e embalagem por peça,
   na moeda da RFQ) e `validade`. Custo unitário = preço + frete + embalagem; custo das peças = custo unitário ×
   volume anual (ou quantidade, ou 1). O comparativo converte pela `cambios` do pacote para `moeda_comparativo`.
+- **Volumes por ano** (opcional por pacote, `Pacote.volumes_por_ano`): `Item.volumes` = EAU Y1…Yn, um por ano de
+  lifetime do projeto; rótulos em `rfq.rotulos_anos` (ano do SOP em diante, ou Y1…). Substituem o volume anual no
+  e-mail; `Item.volume_medio()` (média dos anos) é o volume usado no comparativo e nas listas.
 - **Solicitante** foi removido (v0.4): dados antigos com `solicitante_id`/`copiar_solicitante` são ignorados.
 
 ## Convenções

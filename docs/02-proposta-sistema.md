@@ -310,7 +310,7 @@ gravações são atômicas (arquivo temporário + substituição), então o arqu
 | **2.6 — Commodities e comunicação** | Commodities com Commodity Buyer em cópia, cadastro de fornecedores simplificado (Para, Supplier Cc, commodities, idioma), envio confirmado pelos Itens Enviados do Outlook ("Aguardando envio"), cobrança como resposta ao e-mail da RFQ, e-mail de agradecimento / status do projeto, e-mail com tabelas redesenhadas, novo tema visual | ✅ v0.3.0 |
 | **2.7 — Condições e região** | Aba Condições (texto a mais no e-mail de RFQ por commodity e região do fornecedor/projeto, textos PT/ES/EN no Corpo do E-mail; padrão: Moldes e Brasil → Argentina), região no fornecedor e no projeto, commodity independente do fornecedor, e-mail do Commodity Buyer no modelo de fornecedores, solicitante removido | ✅ v0.4.0 |
 | **3 — Análise** | Cotação por item (N02: preço, ferramental, lead time, frete e embalagem por item; moeda e validade da proposta), comparativo lado a lado com câmbio e escolha da vencedora (N03), scorecard com pontualidade e menor preço (N06) | ✅ v0.5.0 |
-| **3.1 — Volumes por ano** | EAU Y1…Yn conforme SOP/lifetime do projeto (N11) | Próxima |
+| **3.1 — Volumes por ano** | EAU Y1…Yn conforme SOP/lifetime do projeto (N11), opcional por pacote: colunas por ano na solicitação e no e-mail, média no comparativo | ✅ v0.6.0 |
 | **4 — Integrações** | Leitura automática de respostas no Outlook (N13), lembretes automáticos | Futuro |
 
 A planilha pode ser aposentada a partir da v0.1.0: importe o `.xlsm` em **Configurações →

@@ -69,7 +69,7 @@ class TabelaCotacao(QTableWidget):
                 "posicao": str(linha + 1), "ref_op": item.ref_op, "ref_cdc": item.ref_cdc,
                 "descricao": item.descricao,
                 "quantidade": " ".join(p for p in (numero_br(item.quantidade), item.unidade) if p),
-                "volume_anual": numero_br(item.volume_anual),
+                "volume_anual": numero_br(item.volume_medio()),  # com volumes por ano: a média
             }
             for coluna, (campo, _, _) in enumerate(COLUNAS_ITEM):
                 celula = QTableWidgetItem(valores_item[campo])

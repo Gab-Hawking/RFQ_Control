@@ -50,21 +50,53 @@ COLUNAS_ITENS = [
     ("volume_anual", "Volume anual", 125),
 ]
 _NUMERICAS = {"quantidade", "volume_anual"}
+_LARGURAS_COM_ANOS = {"ref_op": 150, "ref_cdc": 170, "descricao": 130, "unidade": 70, "quantidade": 95}
+PAPEL_ID = Qt.ItemDataRole.UserRole  # id do item (a cotação por item das RFQs aponta para ele)
+PAPEL_OCULTOS = Qt.ItemDataRole.UserRole + 3  # textos das colunas fora da tela (ex.: volume anual com volumes por ano)
+
+
+def _numerica(campo: str) -> bool:
+    return campo in _NUMERICAS or campo.startswith("ano")
 
 
 class TabelaItens(QTableWidget):
-    """Grade de itens que aceita colar várias linhas/colunas do Excel (Ctrl+V)."""
+    """Grade de itens que aceita colar várias linhas/colunas do Excel (Ctrl+V).
+
+    Com volumes por ano, a coluna "Volume anual" dá lugar a uma coluna por ano ("EAU 2027"…); os valores das
+    colunas que saem da tela ficam guardados na linha e voltam se a opção for desligada antes de salvar.
+    """
 
     def __init__(self, pai=None):
-        super().__init__(0, len(COLUNAS_ITENS), pai)
-        self.setHorizontalHeaderLabels([titulo for _, titulo, _ in COLUNAS_ITENS])
-        for indice, (_, _, largura) in enumerate(COLUNAS_ITENS):
-            self.setColumnWidth(indice, largura)
-        self.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        super().__init__(0, 0, pai)
+        self.colunas = list(COLUNAS_ITENS)
         self.verticalHeader().setDefaultSectionSize(32)
         self.setItemDelegate(DelegadoBase(self))
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setAlternatingRowColors(True)
+        self._montar_cabecalho()
+
+    def _montar_cabecalho(self) -> None:
+        self.setColumnCount(len(self.colunas))
+        self.setHorizontalHeaderLabels([titulo for _, titulo, _ in self.colunas])
+        com_anos = any(campo.startswith("ano") for campo, _, _ in self.colunas)
+        for indice, (campo, _, largura) in enumerate(self.colunas):
+            # com volumes por ano, colunas mais estreitas para os anos caberem na tela
+            self.setColumnWidth(indice, _LARGURAS_COM_ANOS.get(campo, largura) if com_anos else largura)
+        modo = QHeaderView.ResizeMode.Interactive if com_anos else QHeaderView.ResizeMode.Stretch
+        self.horizontalHeader().setSectionResizeMode(1, modo)
+
+    def definir_anos(self, anos: list[str]) -> None:
+        """Troca o volume anual pelas colunas de volume por ano (``anos`` vazio: volta ao volume anual)."""
+        linhas = [self._textos(linha) for linha in range(self.rowCount())]
+        base = [c for c in COLUNAS_ITENS if not (anos and c[0] == "volume_anual")]
+        colunas = base + [(f"ano{n}", f"EAU {rotulo}", 90) for n, rotulo in enumerate(anos)]
+        if colunas == self.colunas:
+            return
+        self.colunas = colunas
+        self.setRowCount(0)
+        self._montar_cabecalho()
+        for item_id, textos in linhas:
+            self._adicionar_textos(item_id, textos)
 
     def definir_itens(self, itens: list[Item]) -> None:
         self.setRowCount(0)
@@ -72,18 +104,36 @@ class TabelaItens(QTableWidget):
             self.adicionar_linha(item)
 
     def adicionar_linha(self, item: Item | None = None) -> int:
+        textos: dict[str, str] = {}
+        if item:
+            for campo, _, _ in COLUNAS_ITENS:
+                valor = getattr(item, campo)
+                textos[campo] = numero_br(valor) if campo in _NUMERICAS else (valor or "")
+            for ano, volume in enumerate(item.volumes):
+                textos[f"ano{ano}"] = numero_br(volume)
+        return self._adicionar_textos(item.id if item else "", textos)
+
+    def _adicionar_textos(self, item_id: str, textos: dict[str, str]) -> int:
         linha = self.rowCount()
         self.insertRow(linha)
-        for coluna, (campo, _, _) in enumerate(COLUNAS_ITENS):
-            valor = getattr(item, campo) if item else None
-            texto = numero_br(valor) if campo in _NUMERICAS else (valor or "")
-            celula = QTableWidgetItem(texto)
-            if campo in _NUMERICAS:
+        visiveis = {campo for campo, _, _ in self.colunas}
+        for coluna, (campo, _, _) in enumerate(self.colunas):
+            celula = QTableWidgetItem(textos.get(campo, ""))
+            if _numerica(campo):
                 celula.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.setItem(linha, coluna, celula)
         # o id do item fica na linha: a cotação por item das RFQs continua ligada a ele depois da edição
-        self.item(linha, 0).setData(Qt.ItemDataRole.UserRole, item.id if item else "")
+        self.item(linha, 0).setData(PAPEL_ID, item_id)
+        self.item(linha, 0).setData(PAPEL_OCULTOS, {c: t for c, t in textos.items() if c not in visiveis and t})
         return linha
+
+    def _textos(self, linha: int) -> tuple[str, dict[str, str]]:
+        primeira = self.item(linha, 0)
+        textos = dict(primeira.data(PAPEL_OCULTOS) or {}) if primeira else {}
+        for coluna, (campo, _, _) in enumerate(self.colunas):
+            celula = self.item(linha, coluna)
+            textos[campo] = celula.text().strip() if celula else ""
+        return ((primeira.data(PAPEL_ID) or "") if primeira else ""), textos
 
     def remover_selecionadas(self) -> None:
         for linha in sorted({i.row() for i in self.selectedIndexes()}, reverse=True):
@@ -117,20 +167,26 @@ class TabelaItens(QTableWidget):
         super().keyPressEvent(evento)
 
     def itens(self) -> list[Item]:
+        titulos = {campo: titulo for campo, titulo, _ in self.colunas}
         itens = []
         for linha in range(self.rowCount()):
-            dados = {}
-            for coluna, (campo, titulo, _) in enumerate(COLUNAS_ITENS):
-                texto = self.item(linha, coluna).text().strip() if self.item(linha, coluna) else ""
-                if campo in _NUMERICAS:
+            item_id, textos = self._textos(linha)
+            dados: dict = {}
+            volumes: dict[int, float | None] = {}
+            for campo, texto in textos.items():
+                if _numerica(campo):
                     numero = ler_numero(texto)
                     if texto and numero is None:
+                        titulo = titulos.get(campo, campo)
                         raise srv.ErroNegocio(f"Linha {linha + 1}: '{texto}' não é um número válido em {titulo}.")
-                    dados[campo] = numero
+                    if campo.startswith("ano"):
+                        volumes[int(campo[3:])] = numero
+                    else:
+                        dados[campo] = numero
                 else:
                     dados[campo] = texto
-            primeira = self.item(linha, 0)
-            item = Item(id=(primeira.data(Qt.ItemDataRole.UserRole) or "") if primeira else "", **dados)
+            dados["volumes"] = [volumes.get(n) for n in range(max(volumes, default=-1) + 1)]
+            item = Item(id=item_id, **dados)
             if not item.vazio():
                 itens.append(item)
         return itens
@@ -358,6 +414,10 @@ class DialogoPacote(QDialog):
         grade.addWidget(self.commodity, 3, 1)
         grade.addWidget(QLabel("Prazo de resposta"), 3, 2)
         grade.addWidget(self.prazo, 3, 3)
+        self.volumes_por_ano = QCheckBox("Volumes por ano (EAU Y1…Yn, conforme o lifetime do projeto)")
+        self.volumes_por_ano.setChecked(bool(pacote and pacote.volumes_por_ano))
+        self.volumes_por_ano.toggled.connect(lambda _marcado: self._aplicar_volumes())
+        grade.addWidget(self.volumes_por_ano, 4, 1, 1, 3)
         grade.setColumnStretch(1, 1)
         layout.addLayout(grade)
 
@@ -369,13 +429,15 @@ class DialogoPacote(QDialog):
         itens_layout = QVBoxLayout(aba_itens)
         dica = QLabel(
             "Cole os itens direto do Excel (Ctrl+V) na ordem: OP - Ref, CDC - Ref, Descrição, Unidade, "
-            "Quantidade, Volume anual. Linhas vazias são ignoradas."
+            "Quantidade, Volume anual (com 'Volumes por ano', um volume por ano no lugar dele). Linhas vazias são "
+            "ignoradas."
         )
         dica.setObjectName("dica")
         dica.setWordWrap(True)
         itens_layout.addWidget(dica)
         self.tabela_itens = TabelaItens()
         self.tabela_itens.definir_itens(pacote.itens if pacote else [])
+        self._aplicar_volumes()
         if not pacote:
             for _ in range(3):
                 self.tabela_itens.adicionar_linha()
@@ -470,7 +532,17 @@ class DialogoPacote(QDialog):
         self.projeto.setCurrentIndex(max(0, self.projeto.findData(selecionado)))
         self.projeto.blockSignals(False)
 
+    def _aplicar_volumes(self) -> None:
+        """Volumes por ano só com o lifetime do projeto; as colunas acompanham o SOP e o lifetime."""
+        if not hasattr(self, "tabela_itens"):
+            return  # a tabela ainda está sendo montada
+        anos = srv.rotulos_anos(self.base.projetos.obter(self.projeto.currentData()))
+        self.volumes_por_ano.setEnabled(bool(anos) or self.volumes_por_ano.isChecked())
+        self.volumes_por_ano.setToolTip("" if anos else "Informe o Lifetime (anos) do projeto para usar volumes por ano")
+        self.tabela_itens.definir_anos(anos if self.volumes_por_ano.isChecked() else [])
+
     def _atualizar_info_projeto(self) -> None:
+        self._aplicar_volumes()
         projeto = self.base.projetos.obter(self.projeto.currentData())
         if not projeto:
             self.info_projeto.setText("")
@@ -557,6 +629,7 @@ class DialogoPacote(QDialog):
             "commodity_id": self.commodity.currentData(),
             "data": self.data.valor() or date.today(),
             "prazo_dias_uteis": self.prazo.value(),
+            "volumes_por_ano": self.volumes_por_ano.isChecked(),
             "observacoes": self.observacoes.toPlainText().strip(),
             "itens": self.tabela_itens.itens(),
         }

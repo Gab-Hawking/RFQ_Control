@@ -48,6 +48,9 @@ macros — sem travar, com tudo registrado e com mais recursos.
   voltar para ele e a cada 30 s enquanto houver pendentes) ou com *Confirmar envio*. Se o rascunho for
   apagado sem enviar, nada é registrado como enviado: use *E-mail não enviado* (ou Alterar status →
   Rascunho) para a RFQ voltar a rascunho.
+- **Volumes por ano (EAU):** na solicitação, marque *Volumes por ano* e cada item ganha uma coluna por ano do
+  lifetime do projeto — com o ano-calendário a partir do SOP (EAU 2027, EAU 2028…) ou Y1…Yn sem SOP. No e-mail,
+  essas colunas substituem o volume anual; no comparativo vale a média dos anos.
 - **Nova solicitação em um passo:** escolha o projeto e a commodity, cole os itens do Excel, anexe
   CDC/desenhos, marque os fornecedores (filtros por commodity, idioma e só marcados) → uma RFQ por fornecedor
   (`RFQ2026001`, `RFQ2026002`…) e a tela de envio já aberta.

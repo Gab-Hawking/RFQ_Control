@@ -256,7 +256,7 @@ class DialogoComparativo(QDialog):
         for coluna in range(len(fixas), self.itens.columnCount()):
             self.itens.setColumnWidth(coluna, 135)
         for linha, item in enumerate(comparativo.itens):
-            fixos = [str(linha + 1), item.ref_op, item.ref_cdc, numero_br(item.volume_anual)]
+            fixos = [str(linha + 1), item.ref_op, item.ref_cdc, numero_br(item.volume_medio())]
             for coluna, texto in enumerate(fixos):
                 self.itens.setItem(linha, coluna, _celula(texto, coluna in (0, 3)))
             coluna = len(fixas)

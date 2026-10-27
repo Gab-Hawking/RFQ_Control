@@ -19,7 +19,7 @@ from ..modelos import RFQ, Fornecedor, Idioma, Item, ModeloEmail, Pacote, Projet
 from ..padroes import modelos_email_padrao
 from .condicoes import condicoes_aplicaveis, texto_condicao
 from .formatos import data_por_extenso, numero_por_idioma
-from .rfq import ErroNegocio, caminhos_anexos, prazo_para
+from .rfq import ErroNegocio, anos_do_pacote, caminhos_anexos, prazo_para
 
 # Visual do e-mail: tabelas com cabeçalho escuro e linhas zebradas, quadro do projeto e destaque do prazo.
 # Só estilos em linha e tabelas, que o Outlook (motor do Word) desenha corretamente.
@@ -134,13 +134,30 @@ def _titulo_bloco(texto: str) -> str:
     )
 
 
-def tabela_itens(itens: list[Item], idioma: Idioma) -> tuple[str, str]:
-    """Tabela HTML e versão texto dos itens; colunas sem nenhum valor ficam de fora (menos o volume)."""
+def _volume_do_ano(item: Item, ano: int, idioma: Idioma) -> str:
+    volume = item.volumes[ano] if ano < len(item.volumes) else None
+    return numero_por_idioma(volume, idioma) if volume is not None else ""
+
+
+def tabela_itens(itens: list[Item], idioma: Idioma, anos: list[str] | None = None) -> tuple[str, str]:
+    """Tabela HTML e versão texto dos itens; colunas sem nenhum valor ficam de fora (menos o volume).
+
+    ``anos``: rótulos dos volumes por ano (ex.: ['2027', '2028']) — as colunas "EAU 2027"… substituem o
+    volume anual.
+    """
     rotulos = _ROTULOS[idioma]
     campos = [c for c in _CAMPOS_ITEM if c in _SEMPRE or any(_valor_item(i, c, idioma) for i in itens)]
+    if anos:
+        campos = [c for c in campos if c != "volume_anual"] + [f"ano{n}" for n in range(len(anos))]
+        rotulos = {**rotulos, **{f"ano{n}": f"EAU {rotulo}" for n, rotulo in enumerate(anos)}}
+
+    def valor(item: Item, campo: str) -> str:
+        if campo.startswith("ano"):
+            return _volume_do_ano(item, int(campo[3:]), idioma)
+        return _valor_item(item, campo, idioma)
 
     def celula(tag: str, texto: str, campo: str, fundo: str, extra: str = "") -> str:
-        alinhamento = "right" if campo in _NUMERICOS else "left"
+        alinhamento = "right" if campo in _NUMERICOS or campo.startswith("ano") else "left"
         if tag == "th":
             estilo = (f"background:{COR_ESCURA};color:#FFFFFF;font-family:{FONTE};font-size:9pt;font-weight:bold;"
                       f"letter-spacing:0.3px;padding:9px 12px;border-bottom:3px solid {COR_DESTAQUE};"
@@ -158,7 +175,7 @@ def tabela_itens(itens: list[Item], idioma: Idioma) -> tuple[str, str]:
     linhas_texto = [" | ".join([rotulos["numero"]] + [rotulos[c] for c in campos])]
     for posicao, item in enumerate(itens, start=1):
         fundo = "#FFFFFF" if posicao % 2 else COR_ZEBRA
-        valores = [_valor_item(item, c, idioma) for c in campos]
+        valores = [valor(item, c) for c in campos]
         celulas = celula("td", str(posicao), "", fundo, f"color:{COR_SUAVE};width:28px;") + "".join(
             celula("td", html.escape(v) if v else f'<span style="color:{COR_SUAVE};">—</span>', c, fundo)
             for c, v in zip(campos, valores)
@@ -404,7 +421,7 @@ def montar_email(
         "motivo": "",
     }
     blocos = {
-        "tabela_itens": tabela_itens(pacote.itens, idioma),
+        "tabela_itens": tabela_itens(pacote.itens, idioma, anos_do_pacote(base, pacote)),
         "tabela_projeto": tabela_projeto(projeto, idioma),
     }
     modelo = obter_modelo(base, tipo, idioma)
@@ -459,7 +476,7 @@ def montar_email_agradecimento(
         "motivo": motivo,
     }
     blocos = {
-        "tabela_itens": tabela_itens([i for p in pacotes for i in p.itens], idioma),
+        "tabela_itens": tabela_itens([i for p in pacotes for i in p.itens], idioma, anos_do_pacote(base, pacotes[0])),
         "tabela_projeto": tabela_projeto(projeto, idioma),
     }
     modelo = obter_modelo(base, TipoModelo.AGRADECIMENTO, idioma)

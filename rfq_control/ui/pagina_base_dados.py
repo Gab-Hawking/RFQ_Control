@@ -249,7 +249,7 @@ class AbaControle(QWidget):
             Coluna("CDC - Ref", lambda l: l.item.ref_cdc, largura=230),
             Coluna("Descrição", lambda l: l.item.descricao, largura=130),
             Coluna("UM / QTY", lambda l: _um_qtd(l.item), largura=90, alinhamento=Qt.AlignmentFlag.AlignRight),
-            Coluna("Volume anual", lambda l: l.item.volume_anual, largura=105,
+            Coluna("Volume anual", lambda l: l.item.volume_medio(), largura=105,
                    alinhamento=Qt.AlignmentFlag.AlignRight, formato=numero_br),
             Coluna("Situação", lambda l: l.rfq.situacao(), largura=140),
             Coluna("Prazo", lambda l: l.rfq.prazo, largura=95),

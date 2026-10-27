@@ -297,16 +297,32 @@ class Item(Modelo):
     unidade: str = ""
     quantidade: float | None = Field(default=None, ge=0)
     volume_anual: float | None = Field(default=None, ge=0)
+    volumes: list[float | None] = []  # volumes por ano (EAU Y1…Yn), nos pacotes com volumes por ano
+
+    @field_validator("volumes")
+    @classmethod
+    def _validar_volumes(cls, valor: list[float | None]) -> list[float | None]:
+        if any(v is not None and v < 0 for v in valor):
+            raise ValueError("o volume não pode ser negativo")
+        while valor and valor[-1] is None:
+            valor = valor[:-1]
+        return valor
 
     def vazio(self) -> bool:
         return not any(
             [self.ref_op, self.ref_cdc, self.descricao, self.unidade]
-        ) and self.quantidade is None and self.volume_anual is None
+        ) and self.quantidade is None and self.volume_anual is None and not any(v is not None for v in self.volumes)
+
+    def volume_medio(self) -> float | None:
+        """Volume anual do item: a média dos volumes por ano, se houver; senão o volume anual."""
+        anos = [v for v in self.volumes if v is not None]
+        return sum(anos) / len(anos) if anos else self.volume_anual
 
     def peso(self) -> float:
-        """Multiplicador do preço no comparativo: volume anual; sem ele, a quantidade; sem ela, 1."""
-        if self.volume_anual is not None:
-            return self.volume_anual
+        """Multiplicador do preço no comparativo: volume anual (médio); sem ele, a quantidade; sem ela, 1."""
+        volume = self.volume_medio()
+        if volume is not None:
+            return volume
         return self.quantidade if self.quantidade is not None else 1.0
 
 
@@ -318,6 +334,7 @@ class Pacote(Registro):
     commodity_id: str | None = None
     data: date = Field(default_factory=date.today)
     prazo_dias_uteis: int = Field(default=4, ge=0, le=60)
+    volumes_por_ano: bool = False  # itens com EAU Y1…Yn (anos = lifetime do projeto) no lugar do volume anual
     observacoes: str = ""
     itens: list[Item] = []
     anexos: list[str] = []
