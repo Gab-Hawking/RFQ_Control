@@ -1,7 +1,7 @@
 """Base de dados: as antigas abas da planilha, editáveis como planilha.
 
 Abas (em cima, logo abaixo da descrição): Controle · Fornecedores · Commodities · Projetos ·
-Solicitantes · Feriados · Corpo do E-mail.
+Feriados · Condições · Corpo do E-mail.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from ..modelos import RFQ, Item
 from ..servicos import abas as servico_abas
 from ..servicos.abas import DefinicaoAba
-from ..servicos.cadastros import adicionar_feriados_nacionais
+from ..servicos.cadastros import adicionar_feriados_nacionais, aviso_exclusao
 from ..servicos.envio_email import abrir_arquivo
 from ..servicos.exportacao import exportar_rfqs
 from ..servicos.formatos import numero_br
@@ -140,7 +140,10 @@ class AbaCadastro(QWidget):
         if not linhas:
             avisar(self, "Selecione uma célula das linhas que deseja excluir.")
             return
-        if not confirmar(self, f"Excluir {len(linhas)} linha(s)?", "Excluir", "Excluir"):
+        registros = [self.grade.modelo.linhas[n].registro for n in linhas]
+        aviso = aviso_exclusao(self.janela.base, [r for r in registros if r is not None])
+        if not confirmar(self, f"Excluir {len(linhas)} linha(s)?" + (f"\n\n{aviso}" if aviso else ""),
+                         "Excluir", "Excluir"):
             return
         ok, total = executar(self, lambda: self.grade.modelo.remover(linhas))
         if ok:
@@ -158,7 +161,7 @@ class AbaCadastro(QWidget):
         if not ok:
             return
         self.grade.modelo.carregar()
-        detalhes = list(resultado.erros)
+        detalhes = list(resultado.erros) + list(resultado.avisos)
         if resultado.colunas_ignoradas:
             detalhes.append("Colunas ignoradas (não reconhecidas): " + ", ".join(resultado.colunas_ignoradas))
         resumo = resultado.resumo() + "\nColunas reconhecidas: " + ", ".join(resultado.colunas_reconhecidas)
@@ -191,7 +194,6 @@ class LinhaControle:
     rfq: RFQ
     item: Item
     ordem: int
-    solicitante: str
     cliente: str
     projeto: str
     fornecedor: str
@@ -240,7 +242,6 @@ class AbaControle(QWidget):
         self.tabela = Tabela([
             Coluna("RFQ Nº", lambda l: l.rfq.numero, largura=120),
             Coluna("Data", lambda l: l.rfq.data_envio or l.rfq.data_criacao, largura=95),
-            Coluna("Solicitante", lambda l: l.solicitante, largura=120),
             Coluna("Cliente", lambda l: l.cliente, largura=95),
             Coluna("Projeto", lambda l: l.projeto, largura=170),
             Coluna("Fornecedor", lambda l: l.fornecedor, largura=170),
@@ -253,7 +254,7 @@ class AbaControle(QWidget):
             Coluna("Situação", lambda l: l.rfq.situacao(), largura=140),
             Coluna("Prazo", lambda l: l.rfq.prazo, largura=95),
         ])
-        self.tabela.setItemDelegateForColumn(11, DelegadoSituacao(self.tabela))
+        self.tabela.setItemDelegateForColumn(10, DelegadoSituacao(self.tabela))
         self.tabela.ativada.connect(self._abrir)
         self.tabela.excluir.connect(self._excluir)
         self.busca.textChanged.connect(self.tabela.filtro.definir_busca)
@@ -271,11 +272,9 @@ class AbaControle(QWidget):
                 continue
             projeto = base.projeto_do_pacote(pacote)
             fornecedor = base.fornecedores.obter(rfq.fornecedor_id)
-            solicitante = base.solicitantes.obter(pacote.solicitante_id)
             for ordem, item in enumerate(pacote.itens):
                 linhas.append(LinhaControle(
                     rfq, item, ordem,
-                    solicitante.nome if solicitante else "",
                     projeto.cliente if projeto else "",
                     projeto.nome if projeto else "",
                     fornecedor.nome if fornecedor else "",
@@ -354,10 +353,14 @@ class PaginaBaseDados(QWidget):
         )
         self.commodities = AbaCadastro(janela, servico_abas.ABA_COMMODITIES)
         self.projetos = AbaCadastro(janela, servico_abas.ABA_PROJETOS)
-        self.solicitantes = AbaCadastro(janela, servico_abas.ABA_SOLICITANTES)
         self.feriados = AbaCadastro(
             janela, servico_abas.ABA_FERIADOS,
             [botao("Feriados nacionais…", self._feriados_nacionais, dica="Gera os feriados nacionais de um ano")],
+        )
+        self.condicoes = AbaCadastro(
+            janela, servico_abas.ABA_CONDICOES,
+            [botao("Editar textos…", self._textos_condicao,
+                   dica="Abre os textos da condição (português, espanhol e inglês) na aba Corpo do E-mail")],
         )
         self.modelos = PaginaModelos(janela, embutida=True)
 
@@ -369,8 +372,8 @@ class PaginaBaseDados(QWidget):
             (self.fornecedores, "Fornecedores"),
             (self.commodities, "Commodities"),
             (self.projetos, "Projetos"),
-            (self.solicitantes, "Solicitantes"),
             (self.feriados, "Feriados"),
+            (self.condicoes, "Condições"),
             (self.modelos, "Corpo do E-mail"),
         ):
             self.abas.addTab(widget, titulo)
@@ -379,12 +382,12 @@ class PaginaBaseDados(QWidget):
 
     @property
     def abas_cadastro(self) -> list[AbaCadastro]:
-        return [self.fornecedores, self.commodities, self.projetos, self.solicitantes, self.feriados]
+        return [self.fornecedores, self.commodities, self.projetos, self.feriados, self.condicoes]
 
     def mostrar(self, chave: str) -> None:
         mapa = {"controle": self.controle, "fornecedores": self.fornecedores, "commodities": self.commodities,
-                "projetos": self.projetos,
-                "solicitantes": self.solicitantes, "feriados": self.feriados, "modelos": self.modelos}
+                "projetos": self.projetos, "feriados": self.feriados, "condicoes": self.condicoes,
+                "modelos": self.modelos}
         self.abas.setCurrentWidget(mapa[chave])
         self.atualizar()
 
@@ -409,6 +412,14 @@ class PaginaBaseDados(QWidget):
             return
         if DialogoFornecedor(self.janela, fornecedor).exec() == QDialog.DialogCode.Accepted:
             self.fornecedores.grade.modelo.carregar()
+
+    def _textos_condicao(self) -> None:
+        condicao = self.condicoes.grade.registro_atual()
+        if condicao is None:
+            avisar(self, "Selecione uma condição já salva na tabela.")
+            return
+        self.abas.setCurrentWidget(self.modelos)
+        self.modelos.selecionar_condicao(condicao.id)
 
     def _feriados_nacionais(self) -> None:
         dialogo = DialogoFeriadosNacionais(self.janela)

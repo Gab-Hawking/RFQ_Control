@@ -58,7 +58,7 @@ def test_todas_as_paginas_abrem(janela, app, mensagens):
         base.abas.setCurrentIndex(indice)
         app.processEvents()
     assert [base.abas.tabText(i) for i in range(base.abas.count())] == [
-        "Controle", "Fornecedores", "Commodities", "Projetos", "Solicitantes", "Feriados", "Corpo do E-mail",
+        "Controle", "Fornecedores", "Commodities", "Projetos", "Feriados", "Condições", "Corpo do E-mail",
     ]
     assert base.abas.tabPosition() == base.abas.TabPosition.North  # abas em cima, abaixo da descrição
     assert janela.ir_para("feriados") is base and base.abas.currentWidget() is base.feriados
@@ -238,10 +238,10 @@ def test_grade_cola_varias_linhas_do_excel(janela, app):
 def test_sair_da_base_com_linha_pendente_pergunta(janela, app, monkeypatch):
     from rfq_control.ui import janela_principal
 
-    base = janela.ir_para("solicitantes")
-    base.solicitantes.nova_linha()
-    grade = base.solicitantes.grade
-    grade.model().setData(_indice(grade, len(grade.modelo.linhas) - 1, "email"), "x@y.com")
+    base = janela.ir_para("condicoes")
+    base.condicoes.nova_linha()
+    grade = base.condicoes.grade
+    grade.model().setData(_indice(grade, len(grade.modelo.linhas) - 1, "regiao_projeto"), "Chile")
     respostas = []
     monkeypatch.setattr(janela_principal, "confirmar", lambda *a, **k: respostas.append(a) or False)
     assert janela.ir_para("painel") is base  # ficou na Base de dados
@@ -397,7 +397,7 @@ def test_grade_de_fornecedores_com_commodity(com_commodities, app):
     grade = pagina.fornecedores.grade
     titulos = [c.titulo for c in grade.definicao.colunas]
     assert titulos == ["Fornecedor", "E-mail (Para)", "E-mails Supplier (Cc)", "Commodity",
-                       "E-mail Commodity Buyer (Cc)", "Idioma"]
+                       "E-mail Commodity Buyer (Cc)", "Idioma", "Região"]
     linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "f3")
     buyer = _indice(grade, linha, "email_buyer")
     assert not grade.model().flags(buyer) & Qt.ItemFlag.ItemIsEditable  # coluna calculada
@@ -408,7 +408,8 @@ def test_grade_de_fornecedores_com_commodity(com_commodities, app):
     app.processEvents()
     editor = grade.indexWidget(indice) or next(
         w for w in grade.viewport().findChildren(EditorMultiplo) if w.isVisible())
-    assert [editor.item(i).text() for i in range(editor.count())] == ["Dispositivos", "Ferramentaria"]
+    # "Molde": commodity da condição padrão Moldes
+    assert [editor.item(i).text() for i in range(editor.count())] == ["Dispositivos", "Ferramentaria", "Molde"]
     editor._alternar(editor.item(0))
     editor._alternar(editor.item(1))
     grade.itemDelegate().setModelData(editor, grade.model(), indice)
@@ -545,14 +546,14 @@ def test_envio_nao_pre_marca_rfq_aguardando_envio(janela, pacote_exemplo, monkey
     assert [d.fornecedor_id for d in dialogo.destinatarios()] == ["f2"]
 
 
-def test_colar_pula_a_coluna_calculada(janela, app):
+def test_colar_segue_as_colunas_do_modelo(janela, app):
     pagina = janela.ir_para("fornecedores")
     grade = pagina.fornecedores.grade
     grade.setCurrentIndex(QModelIndex())
-    # linha no formato da planilha de 'Baixar modelo' (só colunas editáveis)
-    grade.colar("Proveedor Uno\tventas@uno.com\t\t\tEspanhol\n")
+    # linha no formato da planilha de 'Baixar modelo' (o e-mail do buyer é ignorado na grade)
+    grade.colar("Proveedor Uno\tventas@uno.com\t\t\tbuyer@op.com\tEspanhol\tAR\n")
     uno = next(f for f in janela.base.fornecedores if f.nome == "Proveedor Uno")
-    assert uno.idioma == Idioma.ES and uno.emails_para() == ["ventas@uno.com"]
+    assert uno.idioma == Idioma.ES and uno.emails_para() == ["ventas@uno.com"] and uno.regiao == "Argentina"
 
 
 def test_grade_com_linha_pendente_atualiza_as_outras(com_commodities, app):
@@ -637,3 +638,97 @@ def test_mensagens_abrem_na_janela_e_nao_na_aba(janela):
 
     aba = janela.ir_para("fornecedores").fornecedores
     assert janela_de(aba) is janela and janela_de(None) is None
+
+
+# ---------------------------------------------------------------- condições, região e sem solicitante
+
+
+def test_aba_condicoes_abre_os_textos_no_corpo_do_email(janela, app, mensagens):
+    from rfq_control.modelos import TipoModelo
+
+    pagina = janela.ir_para("condicoes")
+    grade = pagina.condicoes.grade
+    linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.registro.nome == "Moldes")
+    grade.setCurrentIndex(_indice(grade, linha, "nome"))
+    pagina._textos_condicao()
+    modelos = pagina.modelos
+    assert pagina.abas.currentWidget() is modelos
+    assert modelos.atual.tipo == TipoModelo.CONDICAO and modelos.atual.idioma == Idioma.PT
+    assert modelos.corpo.toPlainText().startswith("Favor enviar a cotação incluindo:")
+    assert not modelos.assunto.isEnabled() and not modelos.botao_restaurar.isEnabled()
+    assert modelos.lista.currentItem().text() == "Condição: Moldes — Português"
+    # texto vazio é aceito (nada é acrescentado nesse idioma) e a lista avisa
+    modelos.corpo.setPlainText("")
+    modelos._salvar()
+    assert not [m for m in mensagens if m[0] == "critical"]
+    assert modelos.lista.currentItem().text() == "Condição: Moldes — Português (vazio)"
+    pagina.condicoes.atualizar()
+    moldes = next(l for l in grade.modelo.linhas if l.registro.nome == "Moldes")
+    assert moldes.valores["texto"] == "sem texto em Português"
+
+
+def test_regiao_na_grade_aceita_valor_digitado(janela, app):
+    from PySide6.QtWidgets import QComboBox
+
+    pagina = janela.ir_para("fornecedores")
+    grade = pagina.fornecedores.grade
+    linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "f1")
+    indice = _indice(grade, linha, "regiao")
+    grade.setCurrentIndex(indice)
+    grade.edit(indice)
+    app.processEvents()
+    editor = grade.viewport().findChildren(QComboBox)[-1]  # editor aberto na célula
+    assert editor.isEditable() and editor.findText("Argentina") >= 0
+    editor.setCurrentText("uruguay")
+    grade.itemDelegate().setModelData(editor, grade.model(), indice)
+    assert janela.base.fornecedores.obter("f1").regiao == "Uruguai"
+
+
+def test_dialogos_tem_regiao_e_nao_tem_solicitante(janela, pacote_exemplo, mensagens):
+    from rfq_control.ui.dialogo_pacote import DialogoPacote
+    from rfq_control.ui.dialogo_rfq import DialogoRFQ
+    from rfq_control.ui.dialogos_cadastro import DialogoFornecedor
+
+    dialogo = DialogoFornecedor(janela, janela.base.fornecedores.obter("f1"))
+    dialogo.regiao.setCurrentText("BR")
+    dialogo._salvar()
+    assert janela.base.fornecedores.obter("f1").regiao == "Brasil"
+
+    janela.base.projetos.salvar(janela.base.projetos.obter("prj1").model_copy(update={"regiao": "Argentina"}))
+    nova = DialogoPacote(janela)
+    assert not hasattr(nova, "solicitante")
+    nova.projeto.setCurrentIndex(nova.projeto.findData("prj1"))
+    assert "Região: Argentina" in nova.info_projeto.text()
+
+    _, [rfq] = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1"])
+    detalhe = DialogoRFQ(janela, rfq)
+    textos = [detalhe.info.itemAt(i).widget().text() for i in range(detalhe.info.count())
+              if detalhe.info.itemAt(i).widget()]
+    assert "Solicitante" not in textos and "Condições" in textos
+    assert "Brasil → Argentina" in textos
+
+
+def test_controle_e_listas_sem_solicitante(janela, pacote_exemplo):
+    srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1"])
+    controle = janela.ir_para("controle").controle
+    rfqs = janela.ir_para("rfqs")
+    pacotes = janela.ir_para("pacotes")
+    for tabela in (controle.tabela, rfqs.tabela, pacotes.tabela):
+        titulos = [tabela.model().headerData(i, Qt.Orientation.Horizontal) for i in range(tabela.model().columnCount())]
+        assert "Solicitante" not in titulos
+    assert controle.tabela.itemDelegateForColumn(10).__class__.__name__ == "DelegadoSituacao"
+
+
+def test_excluir_commodity_avisa_que_sai_dos_fornecedores(com_commodities, app, monkeypatch):
+    from rfq_control.ui import pagina_base_dados
+
+    pagina = com_commodities.ir_para("commodities")
+    grade = pagina.commodities.grade
+    linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "c1")
+    grade.setCurrentIndex(_indice(grade, linha, "nome"))
+    perguntas = []
+    monkeypatch.setattr(pagina_base_dados, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    pagina.commodities.excluir()
+    assert "sai de 1 fornecedor" in perguntas[0]
+    assert com_commodities.base.commodities.obter("c1") is None
+    assert com_commodities.base.fornecedores.obter("f1").commodity_ids == []

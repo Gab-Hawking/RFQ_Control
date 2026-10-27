@@ -9,8 +9,8 @@ from rfq_control.modelos import Contato, Fornecedor, TipoModelo
 
 def test_primeira_execucao_cria_um_arquivo_por_colecao(base, pasta_dados):
     esperados = {
-        "configuracoes.json", "fornecedores.json", "projetos.json", "solicitantes.json",
-        "feriados.json", "modelos_email.json", "pacotes.json", "rfqs.json",
+        "configuracoes.json", "fornecedores.json", "commodities.json", "projetos.json", "feriados.json",
+        "condicoes.json", "modelos_email.json", "pacotes.json", "rfqs.json",
     }
     assert esperados <= {p.name for p in pasta_dados.glob("*.json")}
     assert base.primeira_execucao
@@ -102,5 +102,8 @@ def test_base_antiga_recebe_modelos_que_faltam(base, pasta_dados):
 
     reaberta = BaseDados.abrir(pasta_dados)
     idiomas = {m.idioma.value for m in reaberta.modelos_email}
-    assert idiomas == {"PT", "ES", "EN"} and len(reaberta.modelos_email) == 9  # RFQ, cobrança e agradecimento
+    padrao = [m for m in reaberta.modelos_email if m.tipo != TipoModelo.CONDICAO]
+    assert idiomas == {"PT", "ES", "EN"} and len(padrao) == 9  # RFQ, cobrança e agradecimento
+    # os textos das condições em espanhol também voltam (vazios: o usuário escreve)
+    assert {m.idioma.value for m in reaberta.modelos_email if m.tipo == TipoModelo.CONDICAO} == {"PT", "ES", "EN"}
     assert reaberta.modelos_email.obter(editado.id).assunto == "Assunto personalizado"

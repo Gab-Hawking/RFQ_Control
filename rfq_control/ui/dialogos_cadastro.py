@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from ..modelos import Contato, Fornecedor, Idioma, Projeto
 from ..servicos import cadastros
+from ..servicos.abas import regioes_sugeridas
 from .componentes import DelegadoBase, avisar, botao, executar
 from .formularios import Campo, DialogoFormulario
 
@@ -47,7 +48,8 @@ class DialogoFornecedor(QDialog):
         self.setWindowTitle("Detalhes do fornecedor" if fornecedor else "Novo fornecedor")
         self.resize(760, 620)
         fornecedor = fornecedor or Fornecedor.model_construct(
-            nome="", idioma=Idioma.PT, commodity_ids=[], categoria="", observacoes="", ativo=True, contatos=[]
+            nome="", idioma=Idioma.PT, regiao="", commodity_ids=[], categoria="", observacoes="", ativo=True,
+            contatos=[],
         )
 
         layout = QVBoxLayout(self)
@@ -58,6 +60,11 @@ class DialogoFornecedor(QDialog):
             self.idioma.addItem(idioma.rotulo, idioma)
         self.idioma.setCurrentIndex(self.idioma.findData(fornecedor.idioma))
         self.idioma.setToolTip("Idioma padrão dos e-mails de RFQ para este fornecedor")
+        self.regiao = QComboBox()
+        self.regiao.setEditable(True)
+        self.regiao.addItems([""] + regioes_sugeridas(janela.base))
+        self.regiao.setCurrentText(fornecedor.regiao)
+        self.regiao.setToolTip("País do fornecedor (diferente do idioma), usado nas Condições")
         self.commodities = QListWidget()
         self.commodities.setFixedHeight(104)
         for commodity in sorted(janela.base.commodities, key=lambda c: c.nome.casefold()):
@@ -77,6 +84,7 @@ class DialogoFornecedor(QDialog):
         self.observacoes.setFixedHeight(60)
         formulario.addRow("Nome *", self.nome)
         formulario.addRow("Idioma dos e-mails", self.idioma)
+        formulario.addRow("Região", self.regiao)
         formulario.addRow("Commodities", self.commodities)
         formulario.addRow("", self.ativo)
         formulario.addRow("Observações", self.observacoes)
@@ -164,6 +172,7 @@ class DialogoFornecedor(QDialog):
         dados = {
             "nome": self.nome.text(),
             "idioma": self.idioma.currentData(),
+            "regiao": self.regiao.currentText(),
             "commodity_ids": commodities,
             "ativo": self.ativo.isChecked(),
             "observacoes": self.observacoes.toPlainText(),
@@ -195,6 +204,8 @@ def editar_projeto(janela: JanelaPrincipal, projeto: Projeto | None, pai=None) -
         Campo("nome", "Projeto", obrigatorio=True),
         Campo("cliente", "Cliente", "sugestoes", opcoes=[(c, c) for c in clientes]),
         Campo("planta", "Planta", "sugestoes", opcoes=[(p, p) for p in plantas]),
+        Campo("regiao", "Região", "sugestoes", opcoes=[(r, r) for r in [""] + regioes_sugeridas(base)],
+              dica="País da planta/cotação (ex.: Argentina), usado nas Condições"),
         Campo("sop", "SOP", "data", dica="Start of production"),
         Campo("lifetime_anos", "Lifetime (anos)", "inteiro", maximo=50),
         Campo("ativo", "Ativo", "booleano"),

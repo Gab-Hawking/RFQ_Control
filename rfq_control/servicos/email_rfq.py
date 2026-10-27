@@ -17,6 +17,7 @@ from pathlib import Path
 from ..armazenamento import BaseDados
 from ..modelos import RFQ, Fornecedor, Idioma, Item, ModeloEmail, Pacote, Projeto, StatusRFQ, TipoModelo
 from ..padroes import modelos_email_padrao
+from .condicoes import condicoes_aplicaveis, texto_condicao
 from .formatos import data_por_extenso, numero_por_idioma
 from .rfq import ErroNegocio, caminhos_anexos, prazo_para
 
@@ -96,8 +97,9 @@ _ROTULOS = {
 _CAMPOS_ITEM = ["ref_op", "ref_cdc", "descricao", "quantidade", "volume_anual"]
 _SEMPRE = {"volume_anual"}  # o volume anual sempre aparece na tabela, mesmo sem valor
 _NUMERICOS = {"quantidade", "volume_anual"}
-_BLOCOS = {"tabela_itens", "tabela_projeto"}
+_BLOCOS = {"tabela_itens", "tabela_projeto", "condicoes"}
 _REGEX_VARIAVEL = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
+_REGEX_CONDICOES = re.compile(r"\{\{\s*condicoes\s*\}\}")
 
 
 @dataclass
@@ -221,14 +223,22 @@ def _negrito(texto_escapado: str) -> str:
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", texto_escapado, flags=re.DOTALL)
 
 
+def _recuo_html(linha: str) -> tuple[str, str]:
+    """('&nbsp;…', resto da linha): o HTML ignoraria o tab ou os espaços do começo (ex.: listas com '- ')."""
+    resto = linha.lstrip(" \t")
+    recuo = linha[: len(linha) - len(resto)].replace("\t", "    ")
+    return "&nbsp;" * len(recuo), resto
+
+
 def renderizar(
     modelo: str, variaveis: dict[str, str], blocos: dict[str, tuple[str, str]]
 ) -> tuple[str, str]:
     """Aplica variáveis ``{{nome}}`` ao modelo e devolve (html, texto).
 
     Parágrafos são separados por linha em branco; ``**texto**`` vira negrito e um parágrafo inteiro
-    em negrito vira um quadro de destaque (como o prazo); ``{{tabela_itens}}`` e ``{{tabela_projeto}}``
-    devem ficar em linha própria. Parágrafos que ficam vazios depois das variáveis são omitidos.
+    em negrito vira um quadro de destaque (como o prazo); ``{{tabela_itens}}``, ``{{tabela_projeto}}`` e
+    ``{{condicoes}}`` devem ficar em linha própria. Parágrafos que ficam vazios depois das variáveis são
+    omitidos; o recuo no começo de uma linha (tab ou espaços) é mantido.
     """
 
     def substituir(texto: str, escapar: bool) -> str:
@@ -254,7 +264,8 @@ def renderizar(
         if not texto.replace("*", "").strip():
             continue
         # negrito depois de juntar as linhas: um **…** pode atravessar quebras de linha
-        conteudo = _negrito("<br>".join(substituir(html.escape(linha), escapar=True) for linha in paragrafo.split("\n")))
+        linhas = [_recuo_html(linha) for linha in paragrafo.split("\n")]
+        conteudo = _negrito("<br>".join(recuo + substituir(html.escape(resto), escapar=True) for recuo, resto in linhas))
         if paragrafo.startswith("**") and paragrafo.endswith("**") and paragrafo.count("**") == 2:
             partes_html.append(_quadro_destaque(conteudo))
         else:
@@ -325,7 +336,7 @@ def _projeto_cliente(projeto: Projeto, rotulos: dict[str, str]) -> str:
 def destinatarios(
     base: BaseDados, fornecedor: Fornecedor, pacotes: list[Pacote]
 ) -> tuple[list[str], list[str]]:
-    """(Para, Cc): Cc = fornecedor (Supplier) + Commodity Buyer + cópia padrão (+ solicitante)."""
+    """(Para, Cc): Cc = fornecedor (Supplier) + Commodity Buyer + cópia padrão."""
     config = base.configuracoes
     para = _sem_repetidos(fornecedor.emails_para())
     if not para:
@@ -334,12 +345,20 @@ def destinatarios(
             "Cadastre o e-mail na Base de dados (Fornecedores)."
         )
     copia = fornecedor.emails_copia() + emails_commodity_buyer(base, fornecedor, pacotes) + config.emails_copia_padrao()
-    if config.copiar_solicitante:
-        for pacote in pacotes:
-            solicitante = base.solicitantes.obter(pacote.solicitante_id)
-            if solicitante and solicitante.email:
-                copia.append(solicitante.email)
     return para, _sem_repetidos(copia, excluir={e.lower() for e in para})
+
+
+def bloco_condicoes(
+    base: BaseDados, fornecedor: Fornecedor, pacote: Pacote, projeto: Projeto, idioma: Idioma,
+    variaveis: dict[str, str],
+) -> tuple[str, str]:
+    """Textos das Condições que valem para este fornecedor e pacote, no idioma do e-mail (html, texto)."""
+    partes = [
+        renderizar(texto, variaveis, {})
+        for texto in (texto_condicao(base, c, idioma) for c in condicoes_aplicaveis(base, fornecedor, pacote, projeto))
+        if texto.strip()
+    ]
+    return "\n".join(h for h, _ in partes), "\n\n".join(t for _, t in partes)
 
 
 def _assunto(modelo: ModeloEmail, variaveis: dict[str, str]) -> str:
@@ -363,7 +382,6 @@ def montar_email(
         raise ErroNegocio(f"O fornecedor da {rfq.numero} não foi encontrado.")
     idioma = Idioma(idioma or idioma_padrao(rfq, fornecedor))
     projeto = base.projetos.obter(pacote.projeto_id) or Projeto(nome="?")
-    solicitante = base.solicitantes.obter(pacote.solicitante_id)
     config = base.configuracoes
     para, copia = destinatarios(base, fornecedor, [pacote])
 
@@ -380,7 +398,6 @@ def montar_email(
         "cliente": projeto.cliente,
         "projeto_cliente": _projeto_cliente(projeto, rotulos),
         "planta": projeto.planta,
-        "solicitante": solicitante.nome if solicitante else "",
         "pacote": pacote.titulo,
         "commodity": base.nomes_commodities(pacote.commodity_id),
         "prazo": data_por_extenso(prazo, idioma),
@@ -391,7 +408,13 @@ def montar_email(
         "tabela_projeto": tabela_projeto(projeto, idioma),
     }
     modelo = obter_modelo(base, tipo, idioma)
-    corpo_html, corpo_texto = renderizar(modelo.corpo, variaveis, blocos)
+    corpo = modelo.corpo
+    if tipo == TipoModelo.RFQ:
+        # Condições (ex.: commodity Molde): textos a mais no fim do e-mail, ou onde estiver {{condicoes}}
+        blocos["condicoes"] = bloco_condicoes(base, fornecedor, pacote, projeto, idioma, variaveis)
+        if not _REGEX_CONDICOES.search(corpo):
+            corpo += "\n\n{{condicoes}}"
+    corpo_html, corpo_texto = renderizar(corpo, variaveis, blocos)
 
     return EmailMontado(
         para=para,
@@ -416,7 +439,6 @@ def montar_email_agradecimento(
         raise ErroNegocio("O pacote das RFQs não foi encontrado.")
     idioma = Idioma(idioma)
     projeto = base.projetos.obter(pacotes[0].projeto_id) or Projeto(nome="?")
-    solicitante = base.solicitantes.obter(pacotes[0].solicitante_id)
     config = base.configuracoes
     para, copia = destinatarios(base, fornecedor, pacotes)
     rotulos = _ROTULOS[idioma]
@@ -431,7 +453,6 @@ def montar_email_agradecimento(
         "cliente": projeto.cliente,
         "projeto_cliente": _projeto_cliente(projeto, rotulos),
         "planta": projeto.planta,
-        "solicitante": solicitante.nome if solicitante else "",
         "pacote": ", ".join(p.titulo for p in pacotes),
         "commodity": base.nomes_commodities([p.commodity_id for p in pacotes if p.commodity_id]),
         "prazo": "",

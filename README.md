@@ -7,7 +7,7 @@ macros — sem travar, com tudo registrado e com mais recursos.
 ## O que ele faz
 
 - **Base de dados com as antigas abas da planilha** (botão *Base de dados* no menu lateral): Controle,
-  Fornecedores, Commodities, Projetos, Solicitantes, Feriados e Corpo do E-mail — abas em cima, logo abaixo
+  Fornecedores, Commodities, Projetos, Feriados, Condições e Corpo do E-mail — abas em cima, logo abaixo
   da descrição. Edite direto nas células (cada linha é salva sozinha; a linha atual fica destacada e a célula
   em edição ganha moldura azul), cole várias linhas do Excel com Ctrl+V, copie com Ctrl+C.
 - **Excluir com o botão ou com a tecla Delete:** nas abas de cadastro, selecione as linhas pelo número à
@@ -17,13 +17,25 @@ macros — sem travar, com tudo registrado e com mais recursos.
   histórico do envio ficam guardados) e o app oferece marcá-las como **Cancelada**.
 - **Commodities:** cada commodity tem o seu **Commodity Buyer** (nome e e-mail). Um fornecedor pode ter
   várias commodities. Nos e-mails, o buyer da commodity do pacote (ou das commodities do fornecedor) vai em
-  cópia, junto com os **E-mails Supplier (Cc)** do fornecedor.
-- **Idioma por fornecedor:** coluna *Idioma* no cadastro de fornecedores — **Português, Espanhol ou Inglês**.
-  O e-mail de cada fornecedor sai no idioma dele (texto, datas e tabela).
+  cópia, junto com os **E-mails Supplier (Cc)** do fornecedor. A commodity **não depende de fornecedor**:
+  cadastre na aba Commodities ou digite/cole o nome na aba Fornecedores (a que não existir é criada). Excluir
+  uma commodity a retira dos fornecedores; só as usadas em pacotes ou condições ficam protegidas.
+- **Idioma e região por fornecedor:** colunas *Idioma* (**Português, Espanhol ou Inglês** — o e-mail sai no
+  idioma dele: texto, datas e tabela) e *Região* (país, ex.: Brasil). O projeto também tem *Região* (país da
+  planta/cotação, ex.: Argentina). Siglas e nomes em PT/ES/EN viram o nome em português (BR, Brazil → Brasil).
+- **Condições** (aba *Condições*): textos a mais no e-mail de RFQ conforme a commodity e as regiões. Quando
+  todos os critérios preenchidos batem, o texto entra no fim do e-mail (depois do texto padrão, ou onde estiver
+  `{{condicoes}}`), no idioma do fornecedor; nos outros casos o e-mail fica igual. Os textos em português,
+  espanhol e inglês ficam na aba **Corpo do E-mail** (*Editar textos…*). Já vêm cadastradas:
+  - **Moldes** — commodity Molde: pede Moldflow, frete para TO e embalagem para TO;
+  - **Brasil → Argentina** — fornecedor do Brasil cotando projeto na Argentina: cotação em USD com
+    certificado de origem.
 - **Cadastro em massa:** em cada aba, *Importar Excel/CSV* cria ou atualiza os registros a partir de uma
   planilha (reconhece também os cabeçalhos da planilha antiga). *Baixar modelo* gera a planilha no
-  formato certo, com a lista de idiomas. Na aba Controle, a importação aceita a planilha antiga e o modelo
-  de RFQs — linhas **sem número de RFQ viram RFQs novas**, numeradas automaticamente.
+  formato certo, com a lista de idiomas e as sugestões de região. O modelo de fornecedores traz o
+  **E-mail Commodity Buyer**, que preenche o e-mail das commodities que ainda não têm (um por commodity, na
+  mesma ordem). Na aba Controle, a importação aceita a planilha antiga e o modelo de RFQs (as colunas são
+  achadas pelo cabeçalho) — linhas **sem número de RFQ viram RFQs novas**, numeradas automaticamente.
 - **Enviar e-mails** (botão no menu lateral): escolha a RFQ, marque os fornecedores que vão receber e envie —
   cada um recebe o e-mail padrão no seu idioma, com tabela de itens (com volume anual), quadro do projeto,
   prazo em destaque e anexos. Quem ainda não tem RFQ naquele pacote ganha um número novo na hora. Dá para
@@ -57,7 +69,7 @@ RFQ_Control\
 ├── RFQ_Control.exe        ← abra este
 ├── programa\              ← bibliotecas (não mexa)
 └── dados\                 ← base de dados: um arquivo por "aba"
-    ├── fornecedores.json  commodities.json  projetos.json  solicitantes.json  feriados.json
+    ├── fornecedores.json  commodities.json  projetos.json  feriados.json  condicoes.json
     ├── modelos_email.json pacotes.json   rfqs.json          configuracoes.json
     └── anexos\  emails\  backup\  logs\
 ```

@@ -18,7 +18,6 @@ from rfq_control.modelos import (  # noqa: E402
     Item,
     Pacote,
     Projeto,
-    Solicitante,
 )
 
 
@@ -57,7 +56,6 @@ def base_populada(base: BaseDados) -> BaseDados:
             Projeto(id="prj2", nome="Projeto Beta", cliente="Cliente B", planta="Planta Norte", lifetime_anos=6),
         ]
     )
-    base.solicitantes.salvar(Solicitante(id="sol1", nome="Maria Teste", email="maria@exemplo.com"))
     base.fornecedores.salvar_varios(
         [
             Fornecedor(
@@ -84,7 +82,6 @@ def base_populada(base: BaseDados) -> BaseDados:
 def pacote_exemplo() -> Pacote:
     return Pacote(
         projeto_id="prj1",
-        solicitante_id="sol1",
         data=date(2026, 9, 28),
         itens=[
             Item(ref_op="PECA A", ref_cdc="CDC-PECA-A", unidade="PC", quantidade=2),

@@ -186,7 +186,7 @@ stateDiagram-v2
 ### 4.3 Templates de e-mail atuais (a migrar)
 
 Variáveis: `{{empresa}}`, `{{contato}}`, `{{fornecedor}}`, `{{rfq}}`, `{{cliente}}`, `{{projeto}}`,
-`{{planta}}`, `{{solicitante}}`, `{{pacote}}`, `{{prazo}}`, `{{tabela_itens}}`, `{{tabela_projeto}}`.
+`{{planta}}`, `{{pacote}}`, `{{prazo}}`, `{{tabela_itens}}`, `{{tabela_projeto}}`, `{{condicoes}}`.
 A assinatura é incluída automaticamente (a padrão do Outlook, ou a configurada para `.eml`).
 
 **Assunto (ambos os idiomas):** `{{rfq}} / Customer: {{cliente}} / Project: {{projeto}}`
@@ -276,9 +276,9 @@ RFQ_Control\
     ├── fornecedores.json   (antiga aba CadastroContatos)
     ├── commodities.json    (commodities e Commodity Buyer)
     ├── projetos.json       (antiga aba CadastroProjetos)
-    ├── solicitantes.json
     ├── feriados.json       (antiga aba Feriados)
-    ├── modelos_email.json  (antiga aba CorpoEmail)
+    ├── condicoes.json      (textos a mais no e-mail por commodity/região)
+    ├── modelos_email.json  (antiga aba CorpoEmail, com os textos das condições)
     ├── pacotes.json        (pacotes de cotação e itens)
     ├── rfqs.json           (antiga aba Controle)
     ├── anexos\  emails\  backup\  logs\
@@ -308,6 +308,7 @@ gravações são atômicas (arquivo temporário + substituição), então o arqu
 | **2 — Acompanhamento** | Status, resposta (valor, moeda, lead time), atrasos automáticos, cobrança, painel | ✅ v0.1.0 (resposta no nível da RFQ) |
 | **2.5 — Base de dados e envio** | Tela com as antigas abas (edição tipo planilha), idioma Espanhol, cadastro em massa por Excel/CSV, RFQs novas a partir de planilha, envio de e-mails escolhendo RFQ e fornecedores (revisão ou envio automático) | ✅ v0.2.0 |
 | **2.6 — Commodities e comunicação** | Commodities com Commodity Buyer em cópia, cadastro de fornecedores simplificado (Para, Supplier Cc, commodities, idioma), envio confirmado pelos Itens Enviados do Outlook ("Aguardando envio"), cobrança como resposta ao e-mail da RFQ, e-mail de agradecimento / status do projeto, e-mail com tabelas redesenhadas, novo tema visual | ✅ v0.3.0 |
+| **2.7 — Condições e região** | Aba Condições (texto a mais no e-mail de RFQ por commodity e região do fornecedor/projeto, textos PT/ES/EN no Corpo do E-mail; padrão: Moldes e Brasil → Argentina), região no fornecedor e no projeto, commodity independente do fornecedor, e-mail do Commodity Buyer no modelo de fornecedores, solicitante removido | ✅ v0.4.0 |
 | **3 — Análise** | Cotação por item (N02), comparativo lado a lado (N03), scorecard detalhado, volumes por ano (N11) | Próxima |
 | **4 — Integrações** | Leitura automática de respostas no Outlook (N13), lembretes automáticos | Futuro |
 

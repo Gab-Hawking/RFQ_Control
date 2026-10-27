@@ -13,7 +13,7 @@ import uuid
 from datetime import date, datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _REGEX_EMAIL = re.compile(r"^[^@\s;,]+@[^@\s;,]+\.[^@\s;,]+$")
 
@@ -56,10 +56,7 @@ class Idioma(str, Enum):
     @classmethod
     def de_texto(cls, texto: str | None) -> Idioma:
         """Aceita 'Português', 'Espanhol', 'Inglês', 'PT', 'es', 'English', 'Español'…"""
-        chave = "".join(
-            c for c in unicodedata.normalize("NFD", (texto or "").strip().casefold())
-            if unicodedata.category(c) != "Mn"
-        )
+        chave = _sem_acentos(texto or "")
         for idioma, apelidos in _APELIDOS_IDIOMA.items():
             if chave in apelidos:
                 return idioma
@@ -71,6 +68,44 @@ _APELIDOS_IDIOMA = {
     Idioma.ES: {"es", "espanhol", "espanol", "spanish", "castellano", "esp"},
     Idioma.EN: {"en", "ingles", "english", "eng", "ing", "en-us", "en-gb"},
 }
+
+
+def _sem_acentos(texto: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", (texto or "").strip().casefold()) if unicodedata.category(c) != "Mn"
+    )
+
+
+# Região (país) do fornecedor e do projeto, usada nas Condições. Siglas e nomes em PT/ES/EN viram o nome
+# em português (ex.: "BR", "Brazil" → "Brasil"); outros textos ficam como foram digitados.
+REGIOES = {
+    "Brasil": {"br", "bra", "brasil", "brazil"},
+    "Argentina": {"ar", "arg", "argentina"},
+    "México": {"mx", "mex", "mexico"},
+    "Chile": {"cl", "chi", "chile"},
+    "Uruguai": {"uy", "uru", "uruguai", "uruguay"},
+    "Paraguai": {"py", "par", "paraguai", "paraguay"},
+    "Colômbia": {"co", "col", "colombia"},
+    "Peru": {"pe", "per", "peru"},
+    "Estados Unidos": {"us", "usa", "eua", "estados unidos", "united states", "estados unidos da america"},
+    "Canadá": {"ca", "can", "canada"},
+    "Alemanha": {"de", "ger", "alemanha", "germany", "alemania", "deutschland"},
+    "Espanha": {"es", "esp", "espanha", "spain", "espana"},
+    "Portugal": {"pt", "por", "portugal"},
+    "Itália": {"it", "ita", "italia", "italy"},
+    "França": {"fr", "fra", "franca", "france", "francia"},
+    "China": {"cn", "chn", "china"},
+    "Índia": {"in", "ind", "india"},
+    "Japão": {"jp", "jpn", "japao", "japan", "japon"},
+    "Coreia do Sul": {"kr", "kor", "coreia", "coreia do sul", "south korea", "korea", "corea", "corea del sur"},
+}
+_APELIDOS_REGIAO = {apelido: nome for nome, apelidos in REGIOES.items() for apelido in apelidos}
+
+
+def normalizar_regiao(texto: str | None) -> str:
+    """'BR', 'brazil', ' Brasil ' → 'Brasil'; região fora da lista fica como foi digitada (sem espaços extras)."""
+    limpo = re.sub(r"\s+", " ", texto or "").strip()
+    return _APELIDOS_REGIAO.get(_sem_acentos(limpo), limpo)
 
 
 class StatusRFQ(str, Enum):
@@ -140,6 +175,7 @@ class Commodity(Registro):
 class Fornecedor(Registro):
     nome: str
     idioma: Idioma = Idioma.PT
+    regiao: str = ""  # país do fornecedor (diferente do idioma), usado nas Condições
     commodity_ids: list[str] = []
     categoria: str = ""  # versões até 0.2: texto livre, migrado para commodities ao abrir a base
     observacoes: str = ""
@@ -150,6 +186,11 @@ class Fornecedor(Registro):
     @classmethod
     def _validar_nome(cls, valor: str) -> str:
         return _obrigatorio(valor, "Nome do fornecedor")
+
+    @field_validator("regiao")
+    @classmethod
+    def _validar_regiao(cls, valor: str) -> str:
+        return normalizar_regiao(valor)
 
     def emails_para(self) -> list[str]:
         return [c.email for c in self.contatos if c.email and not c.copia]
@@ -169,6 +210,7 @@ class Projeto(Registro):
     nome: str
     cliente: str = ""
     planta: str = ""
+    regiao: str = ""  # país da planta/cotação (ex.: Argentina), usado nas Condições
     sop: date | None = None
     lifetime_anos: int | None = Field(default=None, ge=0, le=50)
     ativo: bool = True
@@ -178,23 +220,10 @@ class Projeto(Registro):
     def _validar_nome(cls, valor: str) -> str:
         return _obrigatorio(valor, "Nome do projeto")
 
-
-class Solicitante(Registro):
-    nome: str
-    email: str = ""
-    ativo: bool = True
-
-    @field_validator("nome")
+    @field_validator("regiao")
     @classmethod
-    def _validar_nome(cls, valor: str) -> str:
-        return _obrigatorio(valor, "Nome do solicitante")
-
-    @field_validator("email")
-    @classmethod
-    def _validar_email(cls, valor: str) -> str:
-        if valor and not email_valido(valor):
-            raise ValueError(f"e-mail inválido: {valor}")
-        return valor.lower()
+    def _validar_regiao(cls, valor: str) -> str:
+        return normalizar_regiao(valor)
 
 
 class Feriado(Registro):
@@ -206,18 +235,55 @@ class TipoModelo(str, Enum):
     RFQ = "Solicitação de cotação"
     COBRANCA = "Cobrança"
     AGRADECIMENTO = "Agradecimento / status do projeto"
+    CONDICAO = "Texto da condição"  # texto adicional do e-mail de RFQ (aba Condições)
 
 
 class ModeloEmail(Registro):
     tipo: TipoModelo = TipoModelo.RFQ
     idioma: Idioma = Idioma.PT
-    assunto: str
-    corpo: str
+    assunto: str = ""
+    corpo: str = ""
+    condicao_id: str | None = None  # só nos textos de condição
 
-    @field_validator("assunto", "corpo")
+    @model_validator(mode="after")
+    def _validar_textos(self) -> ModeloEmail:
+        if self.tipo == TipoModelo.CONDICAO:
+            # o texto da condição não tem assunto e pode ficar vazio (nada é acrescentado nesse idioma)
+            if not self.condicao_id:
+                raise ValueError("o texto da condição precisa indicar a condição")
+        elif not self.assunto or not self.corpo:
+            raise ValueError("Assunto e corpo é obrigatório")
+        return self
+
+
+class Condicao(Registro):
+    """Texto adicional do e-mail de RFQ quando a commodity e/ou as regiões batem.
+
+    Todos os critérios preenchidos precisam bater; critério vazio vale para qualquer valor. Os textos
+    (português, espanhol e inglês) ficam na aba Corpo do E-mail, como ``ModeloEmail`` do tipo CONDICAO.
+    """
+
+    nome: str
+    commodity_ids: list[str] = []
+    regiao_fornecedor: str = ""
+    regiao_projeto: str = ""
+    ativo: bool = True
+
+    @field_validator("nome")
     @classmethod
-    def _validar_texto(cls, valor: str) -> str:
-        return _obrigatorio(valor, "Assunto e corpo")
+    def _validar_nome(cls, valor: str) -> str:
+        return _obrigatorio(valor, "Nome da condição")
+
+    @field_validator("regiao_fornecedor", "regiao_projeto")
+    @classmethod
+    def _validar_regiao(cls, valor: str) -> str:
+        return normalizar_regiao(valor)
+
+    @model_validator(mode="after")
+    def _validar_criterios(self) -> Condicao:
+        if not (self.commodity_ids or self.regiao_fornecedor or self.regiao_projeto):
+            raise ValueError("escolha ao menos um critério: commodity, região do fornecedor ou região do projeto")
+        return self
 
 
 # ---------------------------------------------------------------- cotações
@@ -243,7 +309,6 @@ class Pacote(Registro):
     titulo: str = ""
     projeto_id: str
     commodity_id: str | None = None
-    solicitante_id: str | None = None
     data: date = Field(default_factory=date.today)
     prazo_dias_uteis: int = Field(default=4, ge=0, le=60)
     observacoes: str = ""
@@ -309,7 +374,6 @@ class Configuracoes(Modelo):
     metodo_email: MetodoEmail = MetodoEmail.OUTLOOK
     assinatura_html: str = ""
     copia_padrao: str = ""
-    copiar_solicitante: bool = False
     moeda_padrao: str = "BRL"
     envio_automatico: bool = False  # True = envia direto pelo Outlook, sem abrir o rascunho
 

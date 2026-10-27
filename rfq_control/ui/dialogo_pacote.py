@@ -324,16 +324,6 @@ class DialogoPacote(QDialog):
         self.info_projeto = QLabel()
         self.info_projeto.setObjectName("dica")
 
-        self.solicitante = QComboBox()
-        self.solicitante.addItem("—", None)
-        for solicitante in sorted(self.base.solicitantes, key=lambda s: s.nome.casefold()):
-            if solicitante.ativo or (pacote and pacote.solicitante_id == solicitante.id):
-                self.solicitante.addItem(solicitante.nome, solicitante.id)
-        if pacote:
-            self.solicitante.setCurrentIndex(max(0, self.solicitante.findData(pacote.solicitante_id)))
-        elif self.solicitante.count() == 2:
-            self.solicitante.setCurrentIndex(1)
-
         self.titulo = QLineEdit(pacote.titulo if pacote else "")
         self.titulo.setPlaceholderText("Automático: projeto + data")
         self.data = CampoData(pacote.data if pacote else date.today())
@@ -355,10 +345,8 @@ class DialogoPacote(QDialog):
 
         grade.addWidget(QLabel("Projeto *"), 0, 0)
         grade.addLayout(linha_projeto, 0, 1)
-        grade.addWidget(QLabel("Solicitante"), 0, 2)
-        grade.addWidget(self.solicitante, 0, 3)
         grade.addWidget(QLabel(""), 1, 0)
-        grade.addWidget(self.info_projeto, 1, 1)
+        grade.addWidget(self.info_projeto, 1, 1, 1, 3)
         grade.addWidget(QLabel("Título"), 2, 0)
         grade.addWidget(self.titulo, 2, 1)
         grade.addWidget(QLabel("Data"), 2, 2)
@@ -484,7 +472,8 @@ class DialogoPacote(QDialog):
         if not projeto:
             self.info_projeto.setText("")
             return
-        partes = [f"Cliente: {projeto.cliente or '—'}", f"Planta: {projeto.planta or '—'}"]
+        partes = [f"Cliente: {projeto.cliente or '—'}", f"Planta: {projeto.planta or '—'}",
+                  f"Região: {projeto.regiao or '—'}"]
         if projeto.lifetime_anos:
             partes.append(f"Lifetime: {projeto.lifetime_anos} anos")
         self.info_projeto.setText("   ·   ".join(partes))
@@ -563,7 +552,6 @@ class DialogoPacote(QDialog):
             "titulo": self.titulo.text().strip(),
             "projeto_id": projeto_id,
             "commodity_id": self.commodity.currentData(),
-            "solicitante_id": self.solicitante.currentData(),
             "data": self.data.valor() or date.today(),
             "prazo_dias_uteis": self.prazo.value(),
             "observacoes": self.observacoes.toPlainText().strip(),

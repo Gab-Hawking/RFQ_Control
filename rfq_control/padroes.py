@@ -165,6 +165,42 @@ MOTIVOS_AGRADECIMENTO = [
     MotivoAgradecimento("outro", "Outro (texto livre)", {}),
 ]
 
+@dataclass(frozen=True)
+class CondicaoPadrao:
+    """Condição criada na primeira abertura da base (aba Condições), com os textos em cada idioma."""
+
+    nome: str
+    textos: dict[Idioma, str]
+    commodity: str = ""  # commodity criada se nenhuma cadastrada começar com um dos prefixos de 'procurar'
+    procurar: tuple[str, ...] = ()
+    regiao_fornecedor: str = ""
+    regiao_projeto: str = ""
+
+
+CONDICOES_PADRAO = [
+    CondicaoPadrao(
+        "Moldes",
+        {
+            Idioma.PT: "Favor enviar a cotação incluindo:\n\t- Moldflow;\n\t- Frete para TO;\n\t- Embalagem para TO",
+            Idioma.ES: "Por favor, envíe la cotización incluyendo:\n\t- Moldflow;\n\t- Flete hasta TO;\n"
+                       "\t- Embalaje para TO",
+            Idioma.EN: "Please send the quotation including:\n\t- Moldflow;\n\t- Freight to TO;\n\t- Packaging for TO",
+        },
+        commodity="Molde",
+        procurar=("mold",),  # Molde, Moldes, Mold, Molds…
+    ),
+    CondicaoPadrao(
+        "Brasil → Argentina",
+        {
+            Idioma.PT: "Favor enviar a cotação em USD incluindo o certificado de origem.",
+            Idioma.ES: "Por favor, envíe la cotización en USD incluyendo el certificado de origen.",
+            Idioma.EN: "Please send the quotation in USD, including the certificate of origin.",
+        },
+        regiao_fornecedor="Brasil",
+        regiao_projeto="Argentina",
+    ),
+]
+
 # Textos padrão de versões anteriores: modelos ainda iguais a eles são atualizados ao abrir a base.
 CORPOS_PADRAO_ANTIGOS = {
     (TipoModelo.COBRANCA, Idioma.PT): """Caro {{contato}},
@@ -211,12 +247,13 @@ VARIAVEIS_MODELO = {
     "cliente": "Cliente do projeto",
     "projeto_cliente": "Projeto com o cliente entre parênteses (só o projeto, se não houver cliente)",
     "planta": "Planta do projeto",
-    "solicitante": "Nome do solicitante",
     "pacote": "Título do pacote de cotação",
     "commodity": "Commodity do pacote",
     "prazo": "Prazo de resposta por extenso, no idioma do e-mail",
     "tabela_itens": "Tabela com os itens (em uma linha separada)",
     "tabela_projeto": "Quadro com planta, projeto e cliente (em uma linha separada)",
+    "condicoes": "E-mail de RFQ: textos das Condições que valem para o fornecedor (em uma linha separada; "
+                 "sem esta variável, entram no fim do e-mail)",
     "rfqs": "Agradecimento: números das RFQs do fornecedor no projeto",
     "motivo": "Agradecimento: situação do projeto escolhida no envio (ex.: projeto declinado)",
 }

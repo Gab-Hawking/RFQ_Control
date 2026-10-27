@@ -2,7 +2,8 @@
 
 - edição direto na célula (comece a digitar, como no Excel); a linha atual fica destacada e a
   célula atual ganha uma moldura azul;
-- colunas com várias opções (ex.: Commodity) abrem uma lista para marcar;
+- colunas com várias opções (ex.: Commodity) abrem uma lista para marcar; colunas de sugestões (ex.: Região)
+  abrem uma lista que também aceita um valor digitado;
 - colunas calculadas (ex.: e-mail do Commodity Buyer) aparecem em cinza e não são editáveis;
 - cada linha é validada e salva sozinha ao terminar a edição;
 - linhas com problema ficam destacadas, com o motivo na dica (tooltip);
@@ -54,6 +55,7 @@ class ModeloGrade(QAbstractTableModel):
     """Linhas de uma aba de cadastro, salvas uma a uma na base de dados."""
 
     alterado = Signal()
+    mensagem = Signal(str)  # ex.: commodity criada ao digitar o nome no fornecedor
 
     def __init__(self, base: BaseDados, definicao: DefinicaoAba, pai=None):
         super().__init__(pai)
@@ -162,12 +164,16 @@ class ModeloGrade(QAbstractTableModel):
             linha.erro = ""
             self._linha_alterada(numero)
             return False
+        criadas: list[str] = []
         try:
-            registro = self.definicao.gravar_linha(self.base, dict(linha.valores), linha.registro)
+            registro = self.definicao.gravar_linha(self.base, dict(linha.valores), linha.registro, criadas)
         except (ErroNegocio, ErroDados) as problema:
             linha.erro = str(problema)
             self._linha_alterada(numero)
             return False
+        if criadas:
+            self.mensagem.emit("Criada(s) na aba Commodities: " + ", ".join(criadas)
+                               + " — complete o Commodity Buyer lá.")
         linha.registro = registro
         linha.valores = self.definicao.para_linha(self.base, registro)
         linha.erro = ""
@@ -308,7 +314,8 @@ class DelegadoGrade(DelegadoBase):
         if opcoes:
             editor = QComboBox(pai)
             editor.setObjectName("editorCelula")
-            editor.addItems(([""] if coluna.tipo == "lista" else []) + list(opcoes))
+            editor.setEditable(coluna.tipo == "sugestoes")  # sugestões: aceita também um valor digitado
+            editor.addItems(([""] if coluna.tipo in ("lista", "sugestoes") else []) + list(opcoes))
             # escolher na lista já grava, sem precisar sair da célula
             editor.activated.connect(lambda _i, e=editor: (self.commitData.emit(e), self.closeEditor.emit(e)))
             return editor
@@ -340,7 +347,11 @@ class DelegadoGrade(DelegadoBase):
         elif isinstance(editor, QComboBox):
             posicao = editor.findText(valor)
             editor.setCurrentIndex(max(0, posicao))
-            editor.showPopup()
+            if editor.isEditable():
+                editor.setCurrentText(valor)
+                editor.lineEdit().selectAll()
+            else:
+                editor.showPopup()
         else:
             editor.setText(valor)
 
@@ -362,6 +373,7 @@ class GradeEditavel(QTableView):
         super().__init__(pai)
         self.definicao = definicao
         self.modelo = ModeloGrade(base, definicao, self)
+        self.modelo.mensagem.connect(self.mensagem)
         self.filtro = FiltroBusca(self)
         self.filtro.setSourceModel(self.modelo)
         self.setModel(self.filtro)
@@ -442,9 +454,10 @@ class GradeEditavel(QTableView):
             linha_inicial, coluna_inicial = origem.row(), origem.column()
         else:
             linha_inicial, coluna_inicial = len(self.modelo.linhas), 0
-        # as colunas coladas caem nas colunas editáveis a partir da atual (as calculadas são puladas,
-        # como na planilha de 'Baixar modelo', que só tem as editáveis)
-        destino = [c for c in self.definicao.colunas[coluna_inicial:] if not c.somente_leitura]
+        # as colunas coladas seguem a planilha de 'Baixar modelo' a partir da coluna atual: as calculadas são
+        # puladas, menos as que estão no modelo (ex.: e-mail do Commodity Buyer, ignorado na grade)
+        modelo = self.definicao.colunas_modelo
+        destino = [c for c in self.definicao.colunas[coluna_inicial:] if c in modelo]
         alteracoes: dict[int, dict[str, str]] = {}
         for deslocamento, linha_texto in enumerate(linhas_texto):
             valores = {}

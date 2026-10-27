@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEventLoop, QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -146,7 +145,6 @@ class PaginaConfiguracoes(QWidget):
             self.metodo.addItem(metodo.value, metodo)
         self.copia_padrao = QLineEdit()
         self.copia_padrao.setPlaceholderText("e-mails separados por ; — ex.: seu.email@empresa.com")
-        self.copiar_solicitante = QCheckBox("Copiar o solicitante do pacote nos e-mails de RFQ")
         self.assinatura = QPlainTextEdit()
         self.assinatura.setFixedHeight(110)
         self.assinatura.setPlaceholderText(
@@ -156,7 +154,6 @@ class PaginaConfiguracoes(QWidget):
         form_email.addRow("Nome da empresa", self.empresa)
         form_email.addRow("Abrir e-mails via", self.metodo)
         form_email.addRow("Sempre em cópia (Cc)", self.copia_padrao)
-        form_email.addRow("", self.copiar_solicitante)
         copia_buyer = QLabel("O Commodity Buyer de cada commodity (Base de dados → Commodities) também vai em cópia.")
         copia_buyer.setObjectName("dica")
         copia_buyer.setWordWrap(True)
@@ -225,7 +222,6 @@ class PaginaConfiguracoes(QWidget):
         self.empresa.setText(config.empresa)
         self.metodo.setCurrentIndex(max(0, self.metodo.findData(config.metodo_email)))
         self.copia_padrao.setText(config.copia_padrao)
-        self.copiar_solicitante.setChecked(config.copiar_solicitante)
         self.assinatura.setPlainText(config.assinatura_html)
         self.prefixo.setText(config.prefixo_rfq)
         self.prazo.setValue(config.prazo_dias_uteis)
@@ -242,7 +238,6 @@ class PaginaConfiguracoes(QWidget):
             empresa=self.empresa.text().strip(),
             metodo_email=self.metodo.currentData(),
             copia_padrao="; ".join(separar_emails(self.copia_padrao.text())),
-            copiar_solicitante=self.copiar_solicitante.isChecked(),
             assinatura_html=self.assinatura.toPlainText().strip(),
             prefixo_rfq=self.prefixo.text().strip() or "RFQ",
             prazo_dias_uteis=self.prazo.value(),

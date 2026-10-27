@@ -100,7 +100,6 @@ class PaginaRFQs(QWidget):
             Coluna("Projeto", lambda r: self._projeto(r)[0], largura=190),
             Coluna("Cliente", lambda r: self._projeto(r)[1], largura=110),
             Coluna("Itens", self._itens, largura=55, alinhamento=Qt.AlignmentFlag.AlignRight),
-            Coluna("Solicitante", self._solicitante, largura=130),
             Coluna("Valor", lambda r: r.valor_total, largura=120, alinhamento=Qt.AlignmentFlag.AlignRight,
                    formato=lambda v: "" if v is None else numero_br(v, 2)),
             Coluna("Pacote", self._pacote, esticar=True),
@@ -135,11 +134,6 @@ class PaginaRFQs(QWidget):
     def _itens(self, rfq: RFQ) -> int:
         pacote = self._pacote_de(rfq)
         return len(pacote.itens) if pacote else 0
-
-    def _solicitante(self, rfq: RFQ) -> str:
-        pacote = self._pacote_de(rfq)
-        solicitante = self.base.solicitantes.obter(pacote.solicitante_id) if pacote else None
-        return solicitante.nome if solicitante else ""
 
     def _pacote(self, rfq: RFQ) -> str:
         pacote = self._pacote_de(rfq)

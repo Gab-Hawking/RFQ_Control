@@ -1,4 +1,4 @@
-"""Formulário genérico para cadastros simples (projetos, solicitantes, feriados)."""
+"""Formulário genérico para cadastros simples (ex.: projeto novo na nova solicitação)."""
 
 from __future__ import annotations
 

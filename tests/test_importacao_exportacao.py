@@ -112,7 +112,6 @@ def test_importacao_completa(base, planilha_antiga):
     assert um.nome_contato() == "Carlos"
     assert fornecedores["Forn Dois"].nome_contato() == ""  # "fornecedor" não é nome de pessoa
 
-    assert [s.nome for s in base.solicitantes] == ["SOLIC TESTE"]
     assert date(2026, 3, 23) in base.datas_feriados()
 
     avisos = "\n".join(relatorio.avisos)

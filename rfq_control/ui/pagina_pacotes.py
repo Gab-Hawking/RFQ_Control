@@ -67,8 +67,7 @@ class PaginaPacotes(QWidget):
             Coluna("RFQs", lambda p: self._contagem(p)[0], largura=65, alinhamento=Qt.AlignmentFlag.AlignRight),
             Coluna("Respondidas", lambda p: self._contagem(p)[1], largura=115, alinhamento=Qt.AlignmentFlag.AlignRight),
             Coluna("Em aberto", lambda p: self._contagem(p)[2], largura=100, alinhamento=Qt.AlignmentFlag.AlignRight),
-            Coluna("Anexos", lambda p: len(p.anexos), largura=80, alinhamento=Qt.AlignmentFlag.AlignRight),
-            Coluna("Solicitante", self._solicitante, esticar=True),
+            Coluna("Anexos", lambda p: len(p.anexos), esticar=True, alinhamento=Qt.AlignmentFlag.AlignRight),
         ], selecao_multipla=False)
         self.tabela.ativada.connect(lambda p: self._abrir(p))
         self.tabela.excluir.connect(self._excluir)
@@ -106,10 +105,6 @@ class PaginaPacotes(QWidget):
     def _projeto(self, pacote: Pacote) -> tuple[str, str]:
         projeto = self.base.projeto_do_pacote(pacote)
         return (projeto.nome, projeto.cliente) if projeto else ("", "")
-
-    def _solicitante(self, pacote: Pacote) -> str:
-        solicitante = self.base.solicitantes.obter(pacote.solicitante_id)
-        return solicitante.nome if solicitante else ""
 
     def _contagem(self, pacote: Pacote) -> tuple[int, int, int]:
         rfqs = [r for r in self._rfqs_por_pacote.get(pacote.id, []) if r.status != StatusRFQ.CANCELADA]

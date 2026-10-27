@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import csv
 import io
-import re
-import unicodedata
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import date
@@ -25,9 +23,22 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from pydantic import BaseModel, ValidationError
 
 from ..armazenamento import BaseDados
-from ..modelos import Commodity, Contato, Feriado, Fornecedor, Idioma, Projeto, Solicitante, agora, separar_emails
+from ..modelos import (
+    REGIOES,
+    Commodity,
+    Condicao,
+    Contato,
+    Feriado,
+    Fornecedor,
+    Idioma,
+    Projeto,
+    agora,
+    email_valido,
+    separar_emails,
+)
 from . import cadastros
-from .formatos import data_curta, ler_data, nomes_de_opcoes, normalizar_nome
+from .condicoes import resumo_textos
+from .formatos import chave_cabecalho, data_curta, ler_data, nomes_de_opcoes, normalizar_nome
 from .leitor_xlsx import ErroPlanilha, LeitorXlsx, Valor, data_excel, letras_coluna
 from .rfq import ErroNegocio
 
@@ -42,13 +53,14 @@ IDIOMAS = tuple(i.rotulo for i in Idioma)  # ("Português", "Espanhol", "Inglês
 class ColunaAba:
     chave: str
     titulo: str
-    tipo: str = "texto"  # texto | data | inteiro | lista | multilista | booleano | emails
+    tipo: str = "texto"  # texto | data | inteiro | lista | multilista | booleano | emails | sugestoes
     opcoes: tuple[str, ...] = ()
     obrigatoria: bool = False
     largura: int = 150
     apelidos: tuple[str, ...] = ()  # outros cabeçalhos aceitos na importação (inclui os da planilha antiga)
     dica: str = ""
     somente_leitura: bool = False  # calculada a partir de outros cadastros (exibida, nunca gravada)
+    no_modelo: bool = False  # calculada na grade, mas vai no modelo de importação (completa outro cadastro)
     opcoes_base: Callable[[BaseDados], list[str]] | None = None  # opções que vêm de outro cadastro
     criar_opcao: Callable[[BaseDados, str], Any] | None = None  # importação: cria a opção que faltar
 
@@ -56,14 +68,6 @@ class ColunaAba:
         if self.opcoes_base and base is not None:
             return tuple(self.opcoes_base(base))
         return self.opcoes
-
-
-def chave_cabecalho(texto: Any) -> str:
-    """'  EMAIL (To) ' → 'emailto'; 'Descrição' → 'descricao'."""
-    sem_acento = "".join(
-        c for c in unicodedata.normalize("NFD", str(texto or "").casefold()) if unicodedata.category(c) != "Mn"
-    )
-    return re.sub(r"[^a-z0-9]", "", sem_acento)
 
 
 def ler_booleano(texto: str, padrao: bool = True) -> bool:
@@ -112,6 +116,8 @@ class DefinicaoAba:
     chave_linha: Callable[[dict[str, str]], str]
     chave_registro: Callable[[Any], str]
     coluna_a_sem_cabecalho: str | None = None  # ex.: aba Feriados antiga (só datas na coluna A)
+    # importação: usa as colunas 'no_modelo' para completar outro cadastro; devolve avisos
+    completar_outros: Callable[[BaseDados, dict[str, str]], list[str]] | None = None
 
     def coluna(self, chave: str) -> ColunaAba:
         return next(c for c in self.colunas if c.chave == chave)
@@ -124,6 +130,11 @@ class DefinicaoAba:
     def editaveis(self) -> list[ColunaAba]:
         return [c for c in self.colunas if not c.somente_leitura]
 
+    @property
+    def colunas_modelo(self) -> list[ColunaAba]:
+        """Colunas da planilha de 'Baixar modelo' (e de colar na grade): as editáveis e as 'no_modelo'."""
+        return [c for c in self.colunas if not c.somente_leitura or c.no_modelo]
+
     def nomes_campos(self) -> dict[str, str]:
         nomes = {c.chave: c.titulo for c in self.colunas}
         nomes.update({"contatos": "E-mail", "data": nomes.get("data", "Data"), "commodity_ids": "Commodity"})
@@ -132,15 +143,18 @@ class DefinicaoAba:
     def linha_vazia(self) -> dict[str, str]:
         return {c.chave: "" for c in self.colunas}
 
-    def registro_de_linha(self, base: BaseDados, linha: dict[str, str], existente: Any | None) -> Any:
-        """Converte e valida (sem gravar). Colunas ausentes em ``linha`` mantêm o valor atual."""
-        somente_leitura = {c.chave for c in self.colunas if c.somente_leitura}
-        linha = {chave: valor for chave, valor in linha.items() if chave not in somente_leitura}
+    def _conferir_obrigatoria(self, linha: dict[str, str], existente: Any | None) -> None:
         obrigatoria = self.obrigatoria
         if obrigatoria.chave in linha and not str(linha[obrigatoria.chave]).strip():
             raise ErroNegocio(f"Preencha a coluna '{obrigatoria.titulo}'.")
         if existente is None and not str(linha.get(obrigatoria.chave, "")).strip():
             raise ErroNegocio(f"Preencha a coluna '{obrigatoria.titulo}'.")
+
+    def registro_de_linha(self, base: BaseDados, linha: dict[str, str], existente: Any | None) -> Any:
+        """Converte e valida (sem gravar). Colunas ausentes em ``linha`` mantêm o valor atual."""
+        somente_leitura = {c.chave for c in self.colunas if c.somente_leitura}
+        linha = {chave: valor for chave, valor in linha.items() if chave not in somente_leitura}
+        self._conferir_obrigatoria(linha, existente)
         try:
             return self.de_linha(base, linha, existente)
         except ErroNegocio:
@@ -148,7 +162,29 @@ class DefinicaoAba:
         except ValueError as erro:  # idioma, Sim/Não…
             raise ErroNegocio(str(erro)) from erro
 
-    def gravar_linha(self, base: BaseDados, linha: dict[str, str], existente: Any | None) -> Any:
+    def criar_opcoes(self, base: BaseDados, linha: dict[str, str]) -> list[str]:
+        """Cria as opções citadas na linha que ainda não existem (ex.: uma commodity nova digitada no
+        fornecedor) — assim nenhum cadastro precisa ser feito antes do outro."""
+        criadas: list[str] = []
+        for coluna in self.colunas:
+            if coluna.criar_opcao is None or coluna.chave not in linha:
+                continue
+            existentes = {normalizar_nome(o) for o in coluna.opcoes_de(base)}
+            for nome in nomes_de_opcoes(str(linha[coluna.chave]), existentes):
+                if normalizar_nome(nome) not in existentes:
+                    coluna.criar_opcao(base, nome)
+                    existentes.add(normalizar_nome(nome))
+                    criadas.append(nome)
+        return criadas
+
+    def gravar_linha(
+        self, base: BaseDados, linha: dict[str, str], existente: Any | None, criadas: list[str] | None = None
+    ) -> Any:
+        """Valida e grava a linha; ``criadas`` recebe as opções novas criadas (ex.: commodities)."""
+        self._conferir_obrigatoria(linha, existente)
+        novas = self.criar_opcoes(base, linha)
+        if criadas is not None:
+            criadas.extend(novas)
         return self.salvar(base, self.registro_de_linha(base, linha, existente))
 
 
@@ -164,6 +200,7 @@ def _linha_fornecedor(base: BaseDados, f: Fornecedor) -> dict[str, str]:
         "commodities": "; ".join(c.nome for c in commodities),
         "email_buyer": "; ".join(dict.fromkeys(c.email for c in commodities if c.email)),
         "idioma": f.idioma.rotulo,
+        "regiao": f.regiao,
     }
 
 
@@ -199,20 +236,55 @@ def _contato(nome: str, email: str, copia: bool, telefone: str) -> Contato:
         raise ErroNegocio(f"E-mail inválido: {email}") from erro
 
 
-def _ids_commodities(base: BaseDados, texto: str) -> list[str]:
+def _commodities_citadas(base: BaseDados, texto: str) -> tuple[list[Commodity], list[str]]:
+    """(commodities cadastradas citadas no texto, sem repetir; nomes que não estão cadastrados)."""
     por_nome = {normalizar_nome(c.nome): c for c in base.commodities}
-    ids, faltando = [], []
+    commodities: list[Commodity] = []
+    faltando: list[str] = []
     for nome in nomes_de_opcoes(texto, set(por_nome)):
         commodity = por_nome.get(normalizar_nome(nome))
         if commodity is None:
             faltando.append(nome)
-        elif commodity.id not in ids:
-            ids.append(commodity.id)
+        elif commodity.id not in {c.id for c in commodities}:
+            commodities.append(commodity)
+    return commodities, faltando
+
+
+def _ids_commodities(base: BaseDados, texto: str) -> list[str]:
+    commodities, faltando = _commodities_citadas(base, texto)
     if faltando:
         raise ErroNegocio(
             "Commodity não cadastrada: " + ", ".join(faltando) + ". Cadastre na aba Commodities."
         )
-    return ids
+    return [c.id for c in commodities]
+
+
+def _completar_buyers(base: BaseDados, linha: dict[str, str]) -> list[str]:
+    """Importação de fornecedores: o 'E-mail Commodity Buyer' preenche o e-mail das commodities que ainda
+    não têm (um e-mail por commodity, na mesma ordem). E-mails já cadastrados na aba Commodities não mudam."""
+    emails = separar_emails(linha.get("email_buyer", ""))
+    if not emails or "commodities" not in linha:
+        return []
+    commodities, _ = _commodities_citadas(base, linha["commodities"])
+    sem_email = [c for c in commodities if not c.email]
+    if len(emails) != len(commodities):
+        if not sem_email:
+            return []
+        return ["informe um e-mail de Commodity Buyer por commodity, na mesma ordem (o e-mail de "
+                + ", ".join(c.nome for c in sem_email) + " não foi preenchido)."]
+    avisos, alteradas = [], []
+    for commodity, email in zip(commodities, emails):
+        if commodity.email:
+            if commodity.email != email:
+                avisos.append(f"a commodity {commodity.nome} já tem o buyer {commodity.email} (mantido; para mudar, "
+                              "edite a aba Commodities).")
+        elif not email_valido(email):
+            avisos.append(f"e-mail do Commodity Buyer inválido: {email}.")
+        else:
+            alteradas.append(commodity.model_copy(update={"email": email}))
+    if alteradas:
+        base.commodities.salvar_varios(alteradas)
+    return avisos
 
 
 def _fornecedor_de_linha(base: BaseDados, linha: dict[str, str], existente: Fornecedor | None) -> Fornecedor:
@@ -221,6 +293,8 @@ def _fornecedor_de_linha(base: BaseDados, linha: dict[str, str], existente: Forn
         dados["nome"] = linha["nome"]
     if str(linha.get("idioma", "")).strip():
         dados["idioma"] = Idioma.de_texto(linha["idioma"])
+    if "regiao" in linha:
+        dados["regiao"] = linha["regiao"]
     if "commodities" in linha:
         dados["commodity_ids"] = _ids_commodities(base, linha["commodities"])
     dados["contatos"] = [c.model_dump() for c in _contatos_da_linha(linha, existente)]
@@ -235,11 +309,19 @@ def _criar_commodity(base: BaseDados, nome: str) -> Commodity:
     return cadastros.salvar_commodity(base, Commodity(nome=nome))
 
 
+def regioes_sugeridas(base: BaseDados) -> list[str]:
+    """Sugestões de região: os países da lista e as regiões já usadas nos cadastros."""
+    usadas = {f.regiao for f in base.fornecedores} | {p.regiao for p in base.projetos}
+    usadas |= {r for c in base.condicoes for r in (c.regiao_fornecedor, c.regiao_projeto)}
+    return list(REGIOES) + sorted((r for r in usadas if r and r not in REGIOES), key=str.casefold)
+
+
 ABA_FORNECEDORES = DefinicaoAba(
     chave="fornecedores",
     titulo="Fornecedores",
     nome_legado="CadastroContatos",
-    descricao="Fornecedores, e-mails, commodities e idioma dos e-mails (antiga aba CadastroContatos).",
+    descricao="Fornecedores, e-mails, commodities, idioma dos e-mails e região (antiga aba CadastroContatos). "
+              "Uma commodity nova digitada aqui é criada na aba Commodities.",
     colunas=[
         ColunaAba("nome", "Fornecedor", obrigatoria=True, largura=220,
                   apelidos=("fornecedor", "supplier", "supplierdistributor", "nome", "razaosocial")),
@@ -251,14 +333,20 @@ ABA_FORNECEDORES = DefinicaoAba(
                   dica="Pessoas do fornecedor em cópia. Vários e-mails separados por ;"),
         ColunaAba("commodities", "Commodity", "multilista", largura=210,
                   apelidos=("commodity", "commodities", "categoria", "category", "segmento"),
-                  dica="Uma ou mais commodities do fornecedor (cadastradas na aba Commodities), separadas por ;",
+                  dica="Uma ou mais commodities do fornecedor, separadas por ;. A que ainda não existir é criada "
+                       "na aba Commodities.",
                   opcoes_base=_nomes_commodities, criar_opcao=_criar_commodity),
         ColunaAba("email_buyer", "E-mail Commodity Buyer (Cc)", "emails", largura=230, somente_leitura=True,
-                  apelidos=("emailcommoditybuyer", "commoditybuyer", "commoditybuyercc"),
+                  no_modelo=True, apelidos=("emailcommoditybuyer", "commoditybuyer", "commoditybuyercc"),
                   dica="Vem da aba Commodities: o Commodity Buyer de cada commodity vai em cópia nos e-mails. "
-                       "Para mudar, edite a commodity."),
+                       "Na importação, preenche o e-mail das commodities que ainda não têm (um por commodity, "
+                       "na mesma ordem). Para mudar, edite a commodity."),
         ColunaAba("idioma", "Idioma", "lista", IDIOMAS, largura=110, apelidos=("lingua", "language", "idiomas"),
                   dica="Idioma dos e-mails de RFQ para este fornecedor"),
+        ColunaAba("regiao", "Região", "sugestoes", largura=130,
+                  apelidos=("regiao", "pais", "country", "region", "origem"), opcoes_base=regioes_sugeridas,
+                  dica="País do fornecedor (ex.: Brasil). Diferente do idioma: usada nas Condições "
+                       "(ex.: fornecedor do Brasil cotando projeto na Argentina)."),
     ],
     listar=lambda base: sorted(base.fornecedores, key=lambda f: f.nome.casefold()),
     para_linha=_linha_fornecedor,
@@ -266,6 +354,7 @@ ABA_FORNECEDORES = DefinicaoAba(
     salvar=cadastros.salvar_fornecedor,
     chave_linha=lambda linha: normalizar_nome(linha.get("nome", "")),
     chave_registro=lambda f: normalizar_nome(f.nome),
+    completar_outros=_completar_buyers,
 )
 
 
@@ -285,7 +374,8 @@ ABA_COMMODITIES = DefinicaoAba(
     titulo="Commodities",
     nome_legado="Commodity",
     descricao="Commodities e o Commodity Buyer de cada uma: ele vai em cópia (Cc) nos e-mails dos pacotes e "
-              "dos fornecedores da commodity.",
+              "dos fornecedores da commodity. A commodity não depende de fornecedor: cadastre aqui ou digite o "
+              "nome na aba Fornecedores.",
     colunas=[
         ColunaAba("nome", "Commodity", obrigatoria=True, largura=240,
                   apelidos=("commodity", "nome", "categoria", "category")),
@@ -293,14 +383,9 @@ ABA_COMMODITIES = DefinicaoAba(
                   apelidos=("commoditybuyer", "buyer", "comprador", "responsavel")),
         ColunaAba("email", "E-mail do Commodity Buyer", largura=260,
                   apelidos=("emailcommoditybuyer", "emailbuyer", "buyeremail", "email", "emailcomprador")),
-        ColunaAba("fornecedores", "Fornecedores", largura=320, somente_leitura=True,
-                  dica="Fornecedores com esta commodity (escolha na aba Fornecedores)"),
     ],
     listar=lambda base: sorted(base.commodities, key=lambda c: c.nome.casefold()),
-    para_linha=lambda base, c: {
-        "nome": c.nome, "comprador": c.comprador, "email": c.email,
-        "fornecedores": ", ".join(sorted((f.nome for f in base.fornecedores_da_commodity(c.id)), key=str.casefold)),
-    },
+    para_linha=lambda base, c: {"nome": c.nome, "comprador": c.comprador, "email": c.email},
     de_linha=_commodity_de_linha,
     salvar=cadastros.salvar_commodity,
     chave_linha=lambda linha: normalizar_nome(linha.get("nome", "")),
@@ -330,7 +415,7 @@ def _data(texto: str, titulo: str) -> date | None:
 
 def _projeto_de_linha(base: BaseDados, linha: dict[str, str], existente: Projeto | None) -> Projeto:
     dados = existente.model_dump() if existente else {}
-    for chave in ("nome", "cliente", "planta"):
+    for chave in ("nome", "cliente", "planta", "regiao"):
         if chave in linha:
             dados[chave] = linha[chave]
     if "sop" in linha:
@@ -346,7 +431,7 @@ ABA_PROJETOS = DefinicaoAba(
     chave="projetos",
     titulo="Projetos",
     nome_legado="CadastroProjetos",
-    descricao="Projetos, clientes e plantas (antiga aba CadastroProjetos).",
+    descricao="Projetos, clientes, plantas e região da cotação (antiga aba CadastroProjetos).",
     colunas=[
         ColunaAba("planta", "Planta", largura=180, apelidos=("plantaop", "planta", "plant")),
         ColunaAba("cliente", "Cliente", largura=140, apelidos=("cliente", "customer")),
@@ -355,49 +440,19 @@ ABA_PROJETOS = DefinicaoAba(
         ColunaAba("lifetime_anos", "Lifetime (anos)", "inteiro", largura=120,
                   apelidos=("lifetimeyears", "lifetime", "lifetimeanos", "vidautil")),
         ColunaAba("ativo", "Ativo", "booleano", (SIM, NAO), largura=70, apelidos=("ativo", "active")),
+        ColunaAba("regiao", "Região", "sugestoes", largura=130,
+                  apelidos=("regiao", "pais", "country", "region", "regiaodacotacao"), opcoes_base=regioes_sugeridas,
+                  dica="País da planta/cotação (ex.: Argentina), usado nas Condições"),
     ],
     listar=lambda base: sorted(base.projetos, key=lambda p: p.nome.casefold()),
     para_linha=lambda base, p: {
-        "planta": p.planta, "cliente": p.cliente, "nome": p.nome, "sop": data_curta(p.sop),
+        "planta": p.planta, "regiao": p.regiao, "cliente": p.cliente, "nome": p.nome, "sop": data_curta(p.sop),
         "lifetime_anos": str(p.lifetime_anos or ""), "ativo": texto_booleano(p.ativo),
     },
     de_linha=_projeto_de_linha,
     salvar=cadastros.salvar_projeto,
     chave_linha=lambda linha: normalizar_nome(linha.get("nome", "")),
     chave_registro=lambda p: normalizar_nome(p.nome),
-)
-
-
-# ---------------------------------------------------------------- solicitantes
-
-
-def _solicitante_de_linha(base: BaseDados, linha: dict[str, str], existente: Solicitante | None) -> Solicitante:
-    dados = existente.model_dump() if existente else {}
-    for chave in ("nome", "email"):
-        if chave in linha:
-            dados[chave] = linha[chave]
-    if "ativo" in linha:
-        dados["ativo"] = ler_booleano(linha["ativo"])
-    return _validar(Solicitante, dados, ABA_SOLICITANTES.nomes_campos())
-
-
-ABA_SOLICITANTES = DefinicaoAba(
-    chave="solicitantes",
-    titulo="Solicitantes",
-    nome_legado="Requester",
-    descricao="Pessoas que solicitam as cotações.",
-    colunas=[
-        ColunaAba("nome", "Nome", obrigatoria=True, largura=240,
-                  apelidos=("nome", "solicitante", "requester", "comprador", "buyer")),
-        ColunaAba("email", "E-mail", largura=260, apelidos=("email", "mail")),
-        ColunaAba("ativo", "Ativo", "booleano", (SIM, NAO), largura=70, apelidos=("ativo", "active")),
-    ],
-    listar=lambda base: sorted(base.solicitantes, key=lambda s: s.nome.casefold()),
-    para_linha=lambda base, s: {"nome": s.nome, "email": s.email, "ativo": texto_booleano(s.ativo)},
-    de_linha=_solicitante_de_linha,
-    salvar=cadastros.salvar_solicitante,
-    chave_linha=lambda linha: normalizar_nome(linha.get("nome", "")),
-    chave_registro=lambda s: normalizar_nome(s.nome),
 )
 
 
@@ -440,7 +495,66 @@ ABA_FERIADOS = DefinicaoAba(
     coluna_a_sem_cabecalho="data",
 )
 
-ABAS_CADASTRO = [ABA_FORNECEDORES, ABA_COMMODITIES, ABA_PROJETOS, ABA_SOLICITANTES, ABA_FERIADOS]
+
+# ---------------------------------------------------------------- condições
+
+
+def _linha_condicao(base: BaseDados, c: Condicao) -> dict[str, str]:
+    return {
+        "nome": c.nome,
+        "commodities": "; ".join(x.nome for x in (base.commodities.obter(i) for i in c.commodity_ids) if x),
+        "regiao_fornecedor": c.regiao_fornecedor,
+        "regiao_projeto": c.regiao_projeto,
+        "ativo": texto_booleano(c.ativo),
+        "texto": resumo_textos(base, c),
+    }
+
+
+def _condicao_de_linha(base: BaseDados, linha: dict[str, str], existente: Condicao | None) -> Condicao:
+    dados = existente.model_dump() if existente else {}
+    for chave in ("nome", "regiao_fornecedor", "regiao_projeto"):
+        if chave in linha:
+            dados[chave] = linha[chave]
+    if "commodities" in linha:
+        dados["commodity_ids"] = _ids_commodities(base, linha["commodities"])
+    if "ativo" in linha:
+        dados["ativo"] = ler_booleano(linha["ativo"])
+    return _validar(Condicao, dados, ABA_CONDICOES.nomes_campos())
+
+
+ABA_CONDICOES = DefinicaoAba(
+    chave="condicoes",
+    titulo="Condições",
+    nome_legado="Condicoes",
+    descricao="Textos a mais no e-mail de RFQ conforme a commodity e a região. Quando todos os critérios "
+              "preenchidos batem (vazio = qualquer), o texto da condição entra no fim do e-mail, depois do texto "
+              "padrão, no idioma do fornecedor; nos outros casos o e-mail fica igual. Os textos em português, "
+              "espanhol e inglês ficam na aba Corpo do E-mail ('Editar textos…').",
+    colunas=[
+        ColunaAba("nome", "Condição", obrigatoria=True, largura=240, apelidos=("condicao", "nome", "regra")),
+        ColunaAba("commodities", "Commodity", "multilista", largura=170,
+                  apelidos=("commodity", "commodities"), opcoes_base=_nomes_commodities, criar_opcao=_criar_commodity,
+                  dica="Vale quando a commodity do pacote (ou, sem ela, uma das do fornecedor) é uma destas"),
+        ColunaAba("regiao_fornecedor", "Região do fornecedor", "sugestoes", largura=160,
+                  apelidos=("regiaodofornecedor", "regiaofornecedor", "paisdofornecedor"), opcoes_base=regioes_sugeridas,
+                  dica="Vale quando o fornecedor é desta região (coluna Região da aba Fornecedores)"),
+        ColunaAba("regiao_projeto", "Região do projeto", "sugestoes", largura=160,
+                  apelidos=("regiaodoprojeto", "regiaoprojeto", "regiaodacotacao", "paisdoprojeto"),
+                  opcoes_base=regioes_sugeridas,
+                  dica="Vale quando o projeto da cotação é desta região (coluna Região da aba Projetos)"),
+        ColunaAba("ativo", "Ativa", "booleano", (SIM, NAO), largura=70, apelidos=("ativa", "ativo", "active")),
+        ColunaAba("texto", "Texto no e-mail (Corpo do E-mail)", largura=420, somente_leitura=True,
+                  dica="Texto em português; edite os três idiomas na aba Corpo do E-mail ('Editar textos…')"),
+    ],
+    listar=lambda base: sorted(base.condicoes, key=lambda c: c.nome.casefold()),
+    para_linha=_linha_condicao,
+    de_linha=_condicao_de_linha,
+    salvar=cadastros.salvar_condicao,
+    chave_linha=lambda linha: normalizar_nome(linha.get("nome", "")),
+    chave_registro=lambda c: normalizar_nome(c.nome),
+)
+
+ABAS_CADASTRO = [ABA_FORNECEDORES, ABA_COMMODITIES, ABA_PROJETOS, ABA_FERIADOS, ABA_CONDICOES]
 
 
 # ---------------------------------------------------------------- leitura de arquivos
@@ -554,6 +668,7 @@ class ResultadoImportacaoAba:
     sem_alteracao: int = 0
     opcoes_criadas: list[str] = field(default_factory=list)  # ex.: commodities novas criadas na importação
     erros: list[str] = field(default_factory=list)
+    avisos: list[str] = field(default_factory=list)  # ex.: e-mail do Commodity Buyer que não foi preenchido
     colunas_reconhecidas: list[str] = field(default_factory=list)
     colunas_ignoradas: list[str] = field(default_factory=list)
     pasta_backup: Path | None = None
@@ -569,24 +684,19 @@ class ResultadoImportacaoAba:
                           + ", ".join(self.opcoes_criadas))
         if self.erros:
             partes.append(f"Linhas com erro: {len(self.erros)}")
+        if self.avisos:
+            partes.append(f"Avisos: {len(self.avisos)}")
         return "\n".join(partes)
 
 
 def _criar_opcoes_faltantes(base: BaseDados, definicao: DefinicaoAba, tabela: _Tabela) -> list[str]:
     """Importação em massa: cria as opções citadas no arquivo que ainda não existem (ex.: commodities)."""
     criadas: list[str] = []
-    for chave, letras in tabela.mapa.items():
-        coluna = definicao.coluna(chave)
-        if coluna.criar_opcao is None:
-            continue
-        existentes = {normalizar_nome(o) for o in coluna.opcoes_de(base)}
-        for _numero, valores in tabela.linhas:
-            for letra in letras:
-                for nome in nomes_de_opcoes(_texto_celula(valores.get(letra), coluna), existentes):
-                    if normalizar_nome(nome) not in existentes:
-                        coluna.criar_opcao(base, nome)
-                        existentes.add(normalizar_nome(nome))
-                        criadas.append(nome)
+    colunas = [definicao.coluna(chave) for chave in tabela.mapa if definicao.coluna(chave).criar_opcao]
+    for _numero, valores in tabela.linhas:
+        for coluna in colunas:
+            for letra in tabela.mapa[coluna.chave]:
+                criadas += definicao.criar_opcoes(base, {coluna.chave: _texto_celula(valores.get(letra), coluna)})
     return criadas
 
 
@@ -606,8 +716,10 @@ def importar_arquivo(base: BaseDados, definicao: DefinicaoAba, caminho: Path | s
     resultado = ResultadoImportacaoAba()
     usadas = {letra for letras in tabela.mapa.values() for letra in letras}
     resultado.colunas_ignoradas = [t for l, t in tabela.cabecalhos.items() if l not in usadas and t.strip()]
-    # colunas calculadas (ex.: e-mail do Commodity Buyer) são reconhecidas, mas não importadas
-    tabela.mapa = {chave: letras for chave, letras in tabela.mapa.items() if not definicao.coluna(chave).somente_leitura}
+    # colunas calculadas são reconhecidas, mas não importadas — menos as do modelo (ex.: e-mail do Commodity
+    # Buyer), que completam outro cadastro
+    tabela.mapa = {chave: letras for chave, letras in tabela.mapa.items()
+                   if not definicao.coluna(chave).somente_leitura or definicao.coluna(chave).no_modelo}
     resultado.colunas_reconhecidas = [definicao.coluna(c).titulo for c in tabela.mapa]
     resultado.pasta_backup = base.backup(f"antes_importacao_{definicao.chave}_{agora():%Y-%m-%d_%H%M%S}")
     resultado.opcoes_criadas = _criar_opcoes_faltantes(base, definicao, tabela)
@@ -627,6 +739,8 @@ def importar_arquivo(base: BaseDados, definicao: DefinicaoAba, caminho: Path | s
             resultado.erros.append(f"Linha {numero}: coluna '{definicao.obrigatoria.titulo}' vazia ou inválida.")
             continue
         existente = existentes.get(chave)
+        if definicao.completar_outros:
+            resultado.avisos += [f"Linha {numero}: {aviso}" for aviso in definicao.completar_outros(base, linha)]
         try:
             registro = definicao.registro_de_linha(base, linha, existente)
             if existente is not None and _sem_id(registro) == _sem_id(existente):
@@ -658,8 +772,9 @@ def _planilha_da_aba(
     livro = Workbook()
     aba = livro.active
     aba.title = definicao.titulo[:31]
-    # o modelo de importação só tem as colunas editáveis; a exportação mostra também as calculadas
-    colunas = definicao.editaveis if instrucoes else definicao.colunas
+    # o modelo de importação tem as colunas editáveis (e as que completam outro cadastro); a exportação mostra
+    # também as calculadas
+    colunas = definicao.colunas_modelo if instrucoes else definicao.colunas
     aba.append([c.titulo for c in colunas])
     for celula, coluna in zip(aba[1], colunas):
         celula.font = _FONTE_CABECALHO
@@ -695,7 +810,13 @@ def _planilha_da_aba(
             detalhes = coluna.dica or ""
             opcoes = coluna.opcoes_de(base)
             if opcoes:
-                detalhes = (detalhes + " — " if detalhes else "") + "valores: " + ", ".join(opcoes)
+                if coluna.tipo == "sugestoes":
+                    rotulo = "sugestões (aceita outros valores)"
+                elif coluna.criar_opcao:
+                    rotulo = "cadastradas (as outras são criadas)"
+                else:
+                    rotulo = "valores"
+                detalhes = (detalhes + " — " if detalhes else "") + f"{rotulo}: " + ", ".join(opcoes)
             if coluna.tipo == "data":
                 detalhes = detalhes or "dd/mm/aaaa"
             guia.append([coluna.titulo, detalhes])
@@ -715,13 +836,13 @@ def exportar_aba(base: BaseDados, definicao: DefinicaoAba, destino: Path | str) 
 
 
 CABECALHO_CONTROLE = [
-    "RFQ Nº", "DATA", "SOLICITANTE", "CLIENTE", "PROJETO", "FORNECEDOR", "OP - Ref", "CDC - Ref",
+    "RFQ Nº", "DATA", "CLIENTE", "PROJETO", "FORNECEDOR", "OP - Ref", "CDC - Ref",
     "PART DESCRIPTION", "UM / QTY", "Volume annual",
 ]
 
 
 def gerar_modelo_controle(destino: Path | str) -> Path:
-    """Planilha no formato da aba Controle antiga, para criar RFQs em massa."""
+    """Planilha no formato da aba Controle (sem o antigo SOLICITANTE), para criar RFQs em massa."""
     livro = Workbook()
     aba = livro.active
     aba.title = "Controle"
@@ -729,7 +850,7 @@ def gerar_modelo_controle(destino: Path | str) -> Path:
     for celula in aba[1]:
         celula.font = _FONTE_CABECALHO
         celula.fill = _FUNDO_CABECALHO
-    for indice, largura in enumerate([14, 12, 18, 14, 24, 24, 28, 32, 28, 12, 14], start=1):
+    for indice, largura in enumerate([14, 12, 14, 24, 24, 28, 32, 28, 12, 14], start=1):
         aba.column_dimensions[get_column_letter(indice)].width = largura
     aba.freeze_panes = "A2"
     guia = livro.create_sheet("Instruções")
@@ -744,7 +865,9 @@ def gerar_modelo_controle(destino: Path | str) -> Path:
                              "fornecedor — prontas para o envio dos e-mails."),
         ("Mesmos itens", "Fornecedores com o mesmo projeto e os mesmos itens ficam no mesmo pacote de cotação."),
         ("UM / QTY", "Unidade (EA, PC…) ou quantidade numérica."),
-        ("Cadastros", "Projetos, fornecedores e solicitantes que não existirem são criados automaticamente."),
+        ("Cadastros", "Projetos e fornecedores que não existirem são criados automaticamente."),
+        ("Planilha antiga", "A aba Controle da planilha antiga (com a coluna SOLICITANTE) também é aceita: as "
+                            "colunas são reconhecidas pelo cabeçalho e o solicitante é ignorado."),
     ]
     for titulo, texto in textos:
         guia.append([titulo, texto])

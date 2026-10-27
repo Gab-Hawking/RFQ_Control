@@ -53,8 +53,6 @@ def prazo_para(base: BaseDados, pacote: Pacote, inicio: date | None = None) -> d
 def _validar_pacote(base: BaseDados, pacote: Pacote) -> Pacote:
     if not base.projetos.obter(pacote.projeto_id):
         raise ErroNegocio("Selecione um projeto válido para o pacote.")
-    if pacote.solicitante_id and not base.solicitantes.obter(pacote.solicitante_id):
-        raise ErroNegocio("O solicitante selecionado não existe mais.")
     if pacote.commodity_id and not base.commodities.obter(pacote.commodity_id):
         raise ErroNegocio("A commodity selecionada não existe mais.")
     itens = [i for i in pacote.itens if not i.vazio()]
@@ -132,7 +130,6 @@ def duplicar_pacote(base: BaseDados, pacote_id: str) -> Pacote:
         titulo=f"{original.titulo} (cópia)",
         projeto_id=original.projeto_id,
         commodity_id=original.commodity_id,
-        solicitante_id=original.solicitante_id,
         prazo_dias_uteis=original.prazo_dias_uteis,
         observacoes=original.observacoes,
         itens=[i.model_copy() for i in original.itens],

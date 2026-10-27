@@ -42,8 +42,9 @@ O CI (`.github/workflows/build.yml`) roda os testes no Linux e no Windows e publ
   fica aberto e a RFQ segue como na revisão (`EnvioNaoAutomatico`); erros COM explicados em
   `explicar_erro_outlook` —, busca nos Itens Enviados, cobrança como resposta), `disparo.py` (escolher RFQ + fornecedores e enviar), `agradecimento.py`
   (e-mail de agradecimento / status do projeto, um por fornecedor), `abas.py` (colunas das abas da Base de dados,
-  conversão linha ↔ registro, importação em massa Excel/CSV, modelos), `importacao_legado.py` (aba Controle;
-  linhas sem número viram RFQs novas), `leitor_xlsx.py` (streaming), `exportacao.py`, `cadastros.py`,
+  conversão linha ↔ registro, importação em massa Excel/CSV, modelos; colunas `no_modelo` são calculadas na grade
+  mas vão no modelo e completam outro cadastro), `condicoes.py` (quais condições valem para um e-mail),
+  `importacao_legado.py` (aba Controle, colunas achadas pelo cabeçalho; linhas sem número viram RFQs novas), `leitor_xlsx.py` (streaming), `exportacao.py`, `cadastros.py`,
   `dias_uteis.py`, `formatos.py`.
 - `rfq_control/ui/` — telas; erros de negócio viram mensagem via `componentes.executar`. A tela
   `pagina_base_dados.py` mostra as antigas abas da planilha; as de cadastro usam a grade editável de
@@ -68,6 +69,14 @@ O CI (`.github/workflows/build.yml`) roda os testes no Linux e no Windows e publ
   Fornecedor tem várias commodities; pacote tem uma (opcional). Cc = Supplier Cc + buyer + cópia padrão.
 - **Idioma** (Português, Espanhol, Inglês) é do fornecedor; RFQs em rascunho acompanham o idioma dele,
   RFQs já enviadas guardam o idioma em que foram enviadas.
+- **Região** (país) é do fornecedor e do projeto (planta/cotação) — diferente do idioma; normalizada em
+  `modelos.normalizar_regiao` (BR, Brazil → Brasil).
+- **Condição**: texto a mais no e-mail de RFQ quando todos os critérios preenchidos batem (commodity do pacote —
+  ou, sem ela, as do fornecedor —, região do fornecedor, região do projeto). Os textos PT/ES/EN são
+  `ModeloEmail` do tipo `CONDICAO` (aba Corpo do E-mail, `condicao_id`), entram no fim do e-mail ou em
+  `{{condicoes}}`. Condições padrão (`padroes.CONDICOES_PADRAO`) são criadas uma vez, quando `condicoes.json`
+  ainda não existe.
+- **Solicitante** foi removido (v0.4): dados antigos com `solicitante_id`/`copiar_solicitante` são ignorados.
 
 ## Convenções
 

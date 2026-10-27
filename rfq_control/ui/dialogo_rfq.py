@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from ..modelos import RFQ, Idioma, StatusRFQ, TipoModelo
 from ..servicos import rfq as srv
+from ..servicos.condicoes import condicoes_aplicaveis
 from ..servicos.dias_uteis import dias_uteis_entre
 from ..servicos.email_rfq import destinatarios
 from ..servicos.formatos import data_curta, data_por_extenso, numero_br
@@ -165,7 +166,6 @@ class DialogoRFQ(QDialog):
         pacote = self.base.pacotes.obter(rfq.pacote_id)
         projeto = self.base.projeto_do_pacote(pacote)
         fornecedor = self.base.fornecedores.obter(rfq.fornecedor_id)
-        solicitante = self.base.solicitantes.obter(pacote.solicitante_id) if pacote else None
 
         self.titulo.setText(rfq.numero)
         situacao = rfq.situacao()
@@ -193,8 +193,10 @@ class DialogoRFQ(QDialog):
             ("Para", "; ".join(fornecedor.emails_para()) if fornecedor else ""),
             ("Cópia", self._copia(fornecedor, pacote)),
             ("Pacote", pacote.titulo if pacote else "—"),
-            ("Projeto", f"{projeto.nome} · {projeto.cliente} · {projeto.planta}" if projeto else "—"),
-            ("Solicitante", solicitante.nome if solicitante else "—"),
+            ("Projeto", " · ".join(p for p in (projeto.nome, projeto.cliente, projeto.planta, projeto.regiao) if p)
+             if projeto else "—"),
+            ("Condições", ", ".join(c.nome for c in condicoes_aplicaveis(self.base, fornecedor, pacote, projeto))
+             if fornecedor else ""),
             ("Prazo", prazo or "definido quando o e-mail for enviado"),
         ]
         for linha, (rotulo, valor) in enumerate(pares):

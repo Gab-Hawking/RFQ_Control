@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date, datetime
+from typing import Any
 
 from ..modelos import Idioma
 
@@ -94,6 +96,14 @@ def numero_por_idioma(valor: float | None, idioma: Idioma) -> str:
         casas = 0 if float(valor).is_integer() else 2
         return f"{valor:,.{casas}f}"
     return numero_br(valor)
+
+
+def chave_cabecalho(texto: Any) -> str:
+    """'  EMAIL (To) ' → 'emailto'; 'Descrição' → 'descricao'."""
+    sem_acento = "".join(
+        c for c in unicodedata.normalize("NFD", str(texto or "").casefold()) if unicodedata.category(c) != "Mn"
+    )
+    return re.sub(r"[^a-z0-9]", "", sem_acento)
 
 
 def normalizar_nome(texto: str) -> str:

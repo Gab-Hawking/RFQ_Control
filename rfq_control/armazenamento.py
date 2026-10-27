@@ -5,9 +5,9 @@
     ├── fornecedores.json      (antiga aba CadastroContatos)
     ├── commodities.json       (commodities e o Commodity Buyer de cada uma)
     ├── projetos.json          (antiga aba CadastroProjetos)
-    ├── solicitantes.json
     ├── feriados.json          (antiga aba Feriados)
-    ├── modelos_email.json     (antiga aba CorpoEmail)
+    ├── condicoes.json         (textos adicionais do e-mail por commodity/região)
+    ├── modelos_email.json     (antiga aba CorpoEmail, com os textos das condições)
     ├── pacotes.json           (pacotes de cotação com seus itens)
     ├── rfqs.json              (antiga aba Controle)
     ├── anexos/<pacote>/       (CDC, desenhos…)
@@ -36,16 +36,18 @@ from pydantic import BaseModel, ValidationError
 from .modelos import (
     RFQ,
     Commodity,
+    Condicao,
     Configuracoes,
     Feriado,
     Fornecedor,
+    Idioma,
     ModeloEmail,
     Pacote,
     Projeto,
     Registro,
-    Solicitante,
+    TipoModelo,
 )
-from .padroes import CORPOS_PADRAO_ANTIGOS, modelos_email_padrao
+from .padroes import CONDICOES_PADRAO, CORPOS_PADRAO_ANTIGOS, modelos_email_padrao
 from .servicos.dias_uteis import feriados_nacionais_brasil
 from .servicos.formatos import nomes_de_opcoes, normalizar_nome
 
@@ -198,8 +200,8 @@ class BaseDados:
         self.fornecedores: Colecao[Fornecedor] = self._colecao("fornecedores", Fornecedor)
         self.commodities: Colecao[Commodity] = self._colecao("commodities", Commodity)
         self.projetos: Colecao[Projeto] = self._colecao("projetos", Projeto)
-        self.solicitantes: Colecao[Solicitante] = self._colecao("solicitantes", Solicitante)
         self.feriados: Colecao[Feriado] = self._colecao("feriados", Feriado)
+        self.condicoes: Colecao[Condicao] = self._colecao("condicoes", Condicao)
         self.modelos_email: Colecao[ModeloEmail] = self._colecao("modelos_email", ModeloEmail)
         self.pacotes: Colecao[Pacote] = self._colecao("pacotes", Pacote)
         self.rfqs: Colecao[RFQ] = self._colecao("rfqs", RFQ)
@@ -215,8 +217,8 @@ class BaseDados:
             self.fornecedores,
             self.commodities,
             self.projetos,
-            self.solicitantes,
             self.feriados,
+            self.condicoes,
             self.modelos_email,
             self.pacotes,
             self.rfqs,
@@ -253,12 +255,16 @@ class BaseDados:
         except OSError as erro:
             raise ErroDados(f"Não foi possível criar a pasta de dados {base.pasta}: {erro}") from erro
         base.primeira_execucao = not base.arquivo_configuracoes.exists()
+        sem_condicoes = not base.condicoes.caminho.exists()  # base nova ou de uma versão até a 0.3
         base.carregar()
         if base.primeira_execucao:
             base._criar_conteudo_inicial()
         base._completar_modelos_email()
         base._completar_feriados()
         base._migrar_categorias()
+        if sem_condicoes:
+            base._criar_condicoes_padrao()
+        base._completar_textos_condicoes()
         return base
 
     def carregar(self) -> None:
@@ -296,6 +302,46 @@ class BaseDados:
                 alterados.append(modelo.model_copy(update={"corpo": novo.corpo}))
         if alterados:
             self.modelos_email.salvar_varios(alterados)
+
+    def _criar_condicoes_padrao(self) -> None:
+        """Condições padrão (ex.: Moldes), criadas uma vez: as apagadas pelo usuário não voltam."""
+        condicoes, commodities = [], []
+        for padrao in CONDICOES_PADRAO:
+            ids = []
+            if padrao.commodity:
+                prefixos = padrao.procurar or (normalizar_nome(padrao.commodity),)
+                ids = [c.id for c in self.commodities if normalizar_nome(c.nome).startswith(prefixos)]
+                if not ids:
+                    nova = Commodity(nome=padrao.commodity)
+                    commodities.append(nova)
+                    ids = [nova.id]
+            condicoes.append((Condicao(nome=padrao.nome, commodity_ids=ids, regiao_fornecedor=padrao.regiao_fornecedor,
+                                       regiao_projeto=padrao.regiao_projeto), padrao.textos))
+        if commodities:
+            self.commodities.salvar_varios(commodities)
+        self.condicoes.salvar_varios([c for c, _ in condicoes])
+        self.modelos_email.salvar_varios([
+            ModeloEmail(tipo=TipoModelo.CONDICAO, idioma=idioma, condicao_id=condicao.id, corpo=texto)
+            for condicao, textos in condicoes for idioma, texto in textos.items()
+        ])
+
+    def textos_faltando(self, condicoes: Iterable[Condicao]) -> list[ModeloEmail]:
+        """Textos (vazios) dos idiomas que a condição ainda não tem na aba Corpo do E-mail."""
+        existentes = {(m.condicao_id, m.idioma) for m in self.modelos_email if m.tipo == TipoModelo.CONDICAO}
+        return [
+            ModeloEmail(tipo=TipoModelo.CONDICAO, idioma=idioma, condicao_id=condicao.id)
+            for condicao in condicoes for idioma in Idioma if (condicao.id, idioma) not in existentes
+        ]
+
+    def _completar_textos_condicoes(self) -> None:
+        """Cada condição tem um texto por idioma; textos de condições que não existem mais são apagados."""
+        orfaos = [m.id for m in self.modelos_email
+                  if m.tipo == TipoModelo.CONDICAO and not self.condicoes.obter(m.condicao_id)]
+        if orfaos:
+            self.modelos_email.remover_varios(orfaos)
+        faltando = self.textos_faltando(self.condicoes)
+        if faltando:
+            self.modelos_email.salvar_varios(faltando)
 
     def _completar_feriados(self, hoje: date | None = None) -> None:
         """Gera os feriados nacionais do ano atual e do próximo, se o ano ainda não tiver os nacionais.
@@ -405,11 +451,14 @@ class BaseDados:
     def pacotes_do_projeto(self, projeto_id: str) -> list[Pacote]:
         return [p for p in self.pacotes if p.projeto_id == projeto_id]
 
-    def pacotes_do_solicitante(self, solicitante_id: str) -> list[Pacote]:
-        return [p for p in self.pacotes if p.solicitante_id == solicitante_id]
-
     def pacotes_da_commodity(self, commodity_id: str) -> list[Pacote]:
         return [p for p in self.pacotes if p.commodity_id == commodity_id]
+
+    def condicoes_da_commodity(self, commodity_id: str) -> list[Condicao]:
+        return [c for c in self.condicoes if commodity_id in c.commodity_ids]
+
+    def textos_da_condicao(self, condicao_id: str) -> dict[Idioma, ModeloEmail]:
+        return {m.idioma: m for m in self.modelos_email if m.tipo == TipoModelo.CONDICAO and m.condicao_id == condicao_id}
 
     def projeto_do_pacote(self, pacote: Pacote | None) -> Projeto | None:
         return self.projetos.obter(pacote.projeto_id) if pacote else None
