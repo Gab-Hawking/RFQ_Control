@@ -43,16 +43,20 @@ def test_grade_de_fornecedores_mostra_commodities_e_buyers(commodities):
     assert linha["commodities"] == "Ferramentaria; Dispositivos"
     assert linha["email_buyer"] == "bia@op.com; caio@op.com"
     assert linha["email_cc"] == "copia@um.com"
-    assert set(linha) == {"nome", "email_para", "email_cc", "commodities", "email_buyer", "idioma"}
+    assert set(linha) == {"nome", "email_para", "email_cc", "commodities", "email_buyer", "idioma", "regiao"}
 
 
-def test_grade_aceita_varias_commodities_e_recusa_desconhecida(commodities):
+def test_grade_aceita_varias_commodities_e_cria_a_nova(commodities):
     definicao = abas.ABA_FORNECEDORES
     fornecedor = commodities.fornecedores.obter("f2")
     salvo = definicao.gravar_linha(commodities, {"commodities": "dispositivos;  FERRAMENTARIA"}, fornecedor)
     assert salvo.commodity_ids == ["c2", "c1"]
-    with pytest.raises(srv.ErroNegocio, match="Commodity não cadastrada: Pintura"):
-        definicao.gravar_linha(commodities, {"commodities": "Ferramentaria; Pintura"}, fornecedor)
+    # commodity que não existe é criada: o fornecedor não depende de cadastrar a commodity antes
+    criadas = []
+    com_nova = definicao.gravar_linha(commodities, {"commodities": "Ferramentaria; Pintura"}, salvo, criadas)
+    assert criadas == ["Pintura"]
+    assert commodities.nomes_commodities(com_nova.commodity_ids) == "Ferramentaria, Pintura"
+    salvo = definicao.gravar_linha(commodities, {"commodities": "dispositivos; ferramentaria"}, com_nova)
     # a coluna calculada (e-mail do buyer) nunca chega à conversão nem muda a commodity
     recebidas = []
     original = definicao.de_linha
@@ -71,18 +75,22 @@ def test_aba_commodities(commodities):
     definicao = abas.ABA_COMMODITIES
     nova = definicao.gravar_linha(commodities, {"nome": "Pintura", "comprador": "Dani", "email": "DANI@OP.COM"}, None)
     assert nova.email == "dani@op.com"
-    assert definicao.para_linha(commodities, commodities.commodities.obter("c1"))["fornecedores"] == "Fornecedor Um"
+    # a aba Commodities não depende de fornecedor (não há mais a coluna Fornecedores)
+    assert set(definicao.para_linha(commodities, commodities.commodities.obter("c1"))) == {"nome", "comprador", "email"}
     with pytest.raises(srv.ErroNegocio, match="e-mail inválido"):
         definicao.gravar_linha(commodities, {"email": "dani(arroba)op"}, nova)
     with pytest.raises(srv.ErroNegocio, match="Já existe uma commodity"):
         definicao.gravar_linha(commodities, {"nome": "pintura"}, None)
 
 
-def test_commodity_em_uso_nao_pode_ser_excluida(commodities):
+def test_commodity_de_fornecedor_pode_ser_excluida_mas_a_de_pacote_nao(commodities, pacote_exemplo):
+    c1 = commodities.commodities.obter("c1")
+    assert "1 fornecedor" in cadastros.aviso_exclusao(commodities, [c1])
+    assert cadastros.excluir_registros(commodities, [c1]) == 1
+    assert commodities.fornecedores.obter("f1").commodity_ids == ["c2"]  # sai do fornecedor
+    srv.criar_pacote_com_rfqs(commodities, pacote_exemplo.model_copy(update={"commodity_id": "c2"}), ["f1"])
     with pytest.raises(srv.ErroNegocio, match="em uso"):
-        cadastros.excluir_registros(commodities, [commodities.commodities.obter("c1")])
-    livre = cadastros.salvar_commodity(commodities, Commodity(nome="Sem uso"))
-    assert cadastros.excluir_registros(commodities, [livre]) == 1
+        cadastros.excluir_registros(commodities, [commodities.commodities.obter("c2")])
 
 
 def test_categoria_antiga_vira_commodity(base, pasta_dados):
@@ -90,7 +98,8 @@ def test_categoria_antiga_vira_commodity(base, pasta_dados):
     base.fornecedores.salvar(Fornecedor(id="a", nome="Antigo", categoria="Ferramentaria, Moldes"))
     base.fornecedores.salvar(Fornecedor(id="b", nome="Outro", categoria="ferramentaria"))
     reaberta = BaseDados.abrir(pasta_dados)
-    assert sorted(c.nome for c in reaberta.commodities) == ["Ferramentaria", "Moldes"]
+    # "Molde" é a commodity da condição padrão Moldes, criada na primeira abertura da base
+    assert sorted(c.nome for c in reaberta.commodities) == ["Ferramentaria", "Molde", "Moldes"]
     assert reaberta.nomes_commodities(reaberta.fornecedores.obter("a").commodity_ids) == "Ferramentaria, Moldes"
     assert reaberta.nomes_commodities(reaberta.fornecedores.obter("b").commodity_ids) == "Ferramentaria"
     assert all(not f.categoria for f in reaberta.fornecedores)
@@ -160,7 +169,7 @@ def test_nome_de_commodity_nao_aceita_ponto_e_virgula(base):
 def test_migracao_nao_separa_barra_e_faz_backup(base, pasta_dados):
     base.fornecedores.salvar(Fornecedor(id="a", nome="Antigo", categoria="Usinagem/Solda"))
     reaberta = BaseDados.abrir(pasta_dados)
-    assert [c.nome for c in reaberta.commodities] == ["Usinagem/Solda"]
+    assert [c.nome for c in reaberta.commodities if c.nome != "Molde"] == ["Usinagem/Solda"]
     assert any(p.name.startswith("antes_migracao_commodities") for p in reaberta.pasta_backup.iterdir())
 
 

@@ -4,7 +4,7 @@ Mapeamento (ver docs/01-analise-planilha-legado.md):
 
 * ``Controle``: 1 linha = 1 item de uma RFQ → agrupado em RFQs; RFQs com o
   mesmo projeto e os mesmos itens viram um único **pacote de cotação**.
-* ``CadastroProjetos`` (Tabela1 A:E e solicitantes na coluna J).
+* ``CadastroProjetos`` (Tabela1 A:E).
 * ``CadastroContatos`` (fornecedor, responsável, e-mails To/Cc/Buyer).
 * ``Feriados`` (coluna A).
 
@@ -31,14 +31,13 @@ from ..modelos import (
     Item,
     Pacote,
     Projeto,
-    Solicitante,
     StatusRFQ,
     agora,
     email_valido,
     separar_emails,
 )
 from .dias_uteis import somar_dias_uteis
-from .formatos import ler_numero, normalizar_nome
+from .formatos import chave_cabecalho, ler_numero, normalizar_nome
 from .rfq import proximo_numero
 from .leitor_xlsx import ErroPlanilha, LeitorXlsx, Valor, data_excel
 
@@ -55,7 +54,6 @@ class RelatorioImportacao:
     pacotes_criados: int = 0
     fornecedores_criados: int = 0
     projetos_criados: int = 0
-    solicitantes_criados: int = 0
     feriados_criados: int = 0
     avisos: list[str] = field(default_factory=list)
     pasta_backup: Path | None = None
@@ -68,7 +66,6 @@ class RelatorioImportacao:
             f"Pacotes de cotação criados: {self.pacotes_criados}",
             f"Fornecedores criados: {self.fornecedores_criados}",
             f"Projetos criados: {self.projetos_criados}",
-            f"Solicitantes criados: {self.solicitantes_criados}",
             f"Feriados adicionados: {self.feriados_criados}",
         ]
         if self.rfqs_existentes:
@@ -103,10 +100,8 @@ class _Cadastros:
         # Cópias: os registros da base só mudam quando a gravação final acontece.
         self.projetos = {normalizar_nome(p.nome): p.model_copy(deep=True) for p in base.projetos}
         self.fornecedores = {normalizar_nome(f.nome): f.model_copy(deep=True) for f in base.fornecedores}
-        self.solicitantes = {normalizar_nome(s.nome): s.model_copy(deep=True) for s in base.solicitantes}
         self.novos_projetos: dict[str, Projeto] = {}
         self.novos_fornecedores: dict[str, Fornecedor] = {}
-        self.novos_solicitantes: dict[str, Solicitante] = {}
         self.alterados: set[str] = set()
 
     def projeto(self, nome: str, cliente: str = "", planta: str = "", origem: str = "") -> Projeto:
@@ -137,15 +132,6 @@ class _Cadastros:
             )
         return fornecedor
 
-    def solicitante(self, nome: str) -> Solicitante:
-        chave = normalizar_nome(nome)
-        existente = self.solicitantes.get(chave)
-        if existente:
-            return existente
-        solicitante = Solicitante(nome=nome)
-        self.solicitantes[chave] = self.novos_solicitantes[chave] = solicitante
-        return solicitante
-
 
 def _contatos(nome_responsavel: str, para: str, copia: str, comprador: str, avisos: list[str], fornecedor: str) -> list[Contato]:
     contatos = []
@@ -164,44 +150,83 @@ class _LinhaControle:
     linha: int
     numero: str
     data: date | None
-    solicitante: str
     cliente: str
     projeto: str
     fornecedor: str
     item: Item
 
 
+# Colunas da aba Controle, achadas pelo cabeçalho: a planilha antiga tem SOLICITANTE na coluna C (ignorada) e
+# o modelo atual de importação não tem. Sem cabeçalho reconhecido, valem as posições da planilha antiga.
+_CABECALHOS_CONTROLE = {
+    "numero": ("rfqn", "rfqno", "rfq", "numerorfq", "rfqnumero", "numero"),
+    "data": ("data", "date"),
+    "cliente": ("cliente", "customer"),
+    "projeto": ("projeto", "project"),
+    "fornecedor": ("fornecedor", "supplier"),
+    "ref_op": ("opref", "refop"),
+    "ref_cdc": ("cdcref", "refcdc"),
+    "descricao": ("partdescription", "descricao", "description"),
+    "um_qtd": ("umqty", "um", "qty", "quantidade"),
+    "volume": ("volumeannual", "volumeanual", "annualvolume", "volume"),
+}
+_COLUNAS_PLANILHA_ANTIGA = {
+    "numero": "A", "data": "B", "cliente": "D", "projeto": "E", "fornecedor": "F", "ref_op": "G", "ref_cdc": "H",
+    "descricao": "I", "um_qtd": "J", "volume": "K",
+}
+
+
+def _colunas_controle(leitor: LeitorXlsx) -> dict[str, str]:
+    cabecalho = next(iter(leitor.linhas("Controle")), (0, {}))
+    numero, valores = cabecalho
+    colunas: dict[str, str] = {}
+    if numero == 1:
+        for letra, texto in valores.items():
+            chave = chave_cabecalho(texto)
+            campo = next((c for c, apelidos in _CABECALHOS_CONTROLE.items() if chave in apelidos), None)
+            if campo and campo not in colunas:
+                colunas[campo] = letra
+    if "numero" in colunas and "fornecedor" in colunas:
+        return colunas
+    return dict(_COLUNAS_PLANILHA_ANTIGA)
+
+
 def _ler_controle(leitor: LeitorXlsx, progresso: Callable[[str], None]) -> list[_LinhaControle]:
+    colunas = _colunas_controle(leitor)
+
+    def valor(valores: dict[str, Valor], campo: str) -> Valor:
+        letra = colunas.get(campo)
+        return valores.get(letra) if letra else None
+
     linhas = []
     for numero_linha, valores in leitor.linhas(
         "Controle",
         inicio=2,
-        coluna_chave=("A", "F"),  # número da RFQ ou fornecedor (RFQ nova sem número)
+        coluna_chave=(colunas["numero"], colunas["fornecedor"]),  # número da RFQ ou fornecedor (RFQ nova)
         parar_apos_vazias=LINHAS_VAZIAS_PARA_PARAR,
         progresso=lambda n: progresso(f"Lendo aba Controle… linha {n}"),
     ):
-        numero = _texto(valores.get("A")).upper().replace(" ", "")
-        if not numero and not (_texto(valores.get("F")) and _texto(valores.get("E"))):
+        numero = _texto(valor(valores, "numero")).upper().replace(" ", "")
+        if not numero and not (_texto(valor(valores, "fornecedor")) and _texto(valor(valores, "projeto"))):
             continue  # sem número, só vira RFQ nova se tiver fornecedor e projeto
-        um_qtd = valores.get("J")
+        um_qtd = valor(valores, "um_qtd")
         quantidade = _numero(um_qtd)
         item = Item(
-            ref_op=_texto(valores.get("G")),
-            ref_cdc=_texto(valores.get("H")),
-            descricao=_texto(valores.get("I")),
+            ref_op=_texto(valor(valores, "ref_op")),
+            ref_cdc=_texto(valor(valores, "ref_cdc")),
+            descricao=_texto(valor(valores, "descricao")),
             unidade="" if quantidade is not None else _texto(um_qtd).upper(),
             quantidade=quantidade,
-            volume_anual=_numero(valores.get("K")),
+            volume_anual=_numero(valor(valores, "volume")),
         )
         linhas.append(
             _LinhaControle(
                 linha=numero_linha,
                 numero=numero,
-                data=data_excel(valores.get("B")),
-                solicitante=_texto(valores.get("C")),
-                cliente=_texto(valores.get("D")),
-                projeto=_texto(valores.get("E")),
-                fornecedor=_texto(valores.get("F")),
+                data=data_excel(valor(valores, "data")),
+                cliente=_texto(valor(valores, "cliente")),
+                projeto=_texto(valor(valores, "projeto")),
+                fornecedor=_texto(valor(valores, "fornecedor")),
                 item=item,
             )
         )
@@ -243,7 +268,7 @@ def importar_planilha(
                     existentes.add(dia)
                     novos_feriados.append(Feriado(data=dia, descricao="Importado da planilha"))
 
-        # ------------------------------------------------ projetos e solicitantes
+        # ------------------------------------------------ projetos
         if "CadastroProjetos" in leitor.abas:
             progresso("Lendo cadastro de projetos…")
             for _, valores in leitor.linhas("CadastroProjetos", inicio=2):
@@ -258,9 +283,6 @@ def importar_planilha(
                     if lifetime and not projeto.lifetime_anos and 0 < lifetime <= 50:
                         projeto.lifetime_anos = int(lifetime)
                         cadastros.alterados.add(projeto.id)
-                solicitante = _texto(valores.get("J"))
-                if solicitante:
-                    cadastros.solicitante(solicitante)
 
         # ------------------------------------------------ fornecedores
         if "CadastroContatos" in leitor.abas:
@@ -343,7 +365,6 @@ def importar_planilha(
         if not primeira.fornecedor:
             avisos.append(f"{numero_rfq} (linha {primeira.linha}) está sem fornecedor.")
         fornecedor = cadastros.fornecedor(primeira.fornecedor or "(sem fornecedor)", origem=f"linha {primeira.linha}")
-        solicitante = cadastros.solicitante(primeira.solicitante) if primeira.solicitante else None
         datas = [l.data for l in linhas_rfq if l.data]
         data_envio = min(datas) if datas else None
         if not data_envio and not nova:
@@ -355,7 +376,6 @@ def importar_planilha(
         if pacote is None:
             pacote = Pacote(
                 projeto_id=projeto.id,
-                solicitante_id=solicitante.id if solicitante else None,
                 data=data_envio or date.today(),
                 prazo_dias_uteis=prazo_padrao,
                 itens=itens,
@@ -408,7 +428,6 @@ def importar_planilha(
     novos_cadastros = [
         (base.projetos, list(cadastros.novos_projetos.values()), cadastros.projetos),
         (base.fornecedores, list(cadastros.novos_fornecedores.values()), cadastros.fornecedores),
-        (base.solicitantes, list(cadastros.novos_solicitantes.values()), cadastros.solicitantes),
     ]
     for colecao, novos, indice in novos_cadastros:
         ids_novos = {r.id for r in novos}
@@ -424,7 +443,6 @@ def importar_planilha(
 
     relatorio.projetos_criados = len(cadastros.novos_projetos)
     relatorio.fornecedores_criados = len(cadastros.novos_fornecedores)
-    relatorio.solicitantes_criados = len(cadastros.novos_solicitantes)
     relatorio.feriados_criados = len(novos_feriados)
     relatorio.pacotes_criados = len(pacotes)
     relatorio.rfqs_importadas = len(novas_rfqs) - len(novas_numeradas)

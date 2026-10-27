@@ -42,14 +42,17 @@ O CI (`.github/workflows/build.yml`) roda os testes no Linux e no Windows e publ
   fica aberto e a RFQ segue como na revisão (`EnvioNaoAutomatico`); erros COM explicados em
   `explicar_erro_outlook` —, busca nos Itens Enviados, cobrança como resposta), `disparo.py` (escolher RFQ + fornecedores e enviar), `agradecimento.py`
   (e-mail de agradecimento / status do projeto, um por fornecedor), `abas.py` (colunas das abas da Base de dados,
-  conversão linha ↔ registro, importação em massa Excel/CSV, modelos), `importacao_legado.py` (aba Controle;
-  linhas sem número viram RFQs novas), `leitor_xlsx.py` (streaming), `exportacao.py`, `cadastros.py`,
+  conversão linha ↔ registro, importação em massa Excel/CSV, modelos; colunas `no_modelo` são calculadas na grade
+  mas vão no modelo e completam outro cadastro), `condicoes.py` (quais condições valem para um e-mail), `cotacao.py` (comparativo de propostas com câmbio,
+  melhores valores e competitividade do scorecard),
+  `importacao_legado.py` (aba Controle, colunas achadas pelo cabeçalho; linhas sem número viram RFQs novas), `leitor_xlsx.py` (streaming), `exportacao.py`, `cadastros.py`,
   `dias_uteis.py`, `formatos.py`.
 - `rfq_control/ui/` — telas; erros de negócio viram mensagem via `componentes.executar`. A tela
   `pagina_base_dados.py` mostra as antigas abas da planilha; as de cadastro usam a grade editável de
   `grade.py`, guiada pelas definições de `servicos/abas.py` (para mudar colunas, mude lá; colunas
   `somente_leitura` são calculadas e `multilista` abre uma lista para marcar). O tema fica em `estilo.py`
   (fundo cinza `#7A7A7A`, escuro `#2E2E2E`, azul de destaque); editores de célula usam o nome `editorCelula`.
+  A cotação por item fica em `tabela_cotacao.py` (aba Cotação da RFQ) e o comparativo em `dialogo_comparativo.py`.
 - Testes da automação do Outlook usam `tests/outlook_falso.py` (substitui `envio_email._conectar_outlook`).
 
 ## Conceitos de domínio
@@ -68,6 +71,21 @@ O CI (`.github/workflows/build.yml`) roda os testes no Linux e no Windows e publ
   Fornecedor tem várias commodities; pacote tem uma (opcional). Cc = Supplier Cc + buyer + cópia padrão.
 - **Idioma** (Português, Espanhol, Inglês) é do fornecedor; RFQs em rascunho acompanham o idioma dele,
   RFQs já enviadas guardam o idioma em que foram enviadas.
+- **Região** (país) é do fornecedor e do projeto (planta/cotação) — diferente do idioma; normalizada em
+  `modelos.normalizar_regiao` (BR, Brazil → Brasil).
+- **Condição**: texto a mais no e-mail de RFQ quando todos os critérios preenchidos batem (commodity do pacote —
+  ou, sem ela, as do fornecedor —, região do fornecedor, região do projeto). Os textos PT/ES/EN são
+  `ModeloEmail` do tipo `CONDICAO` (aba Corpo do E-mail, `condicao_id`), entram no fim do e-mail ou em
+  `{{condicoes}}`. Condições padrão (`padroes.CONDICOES_PADRAO`) são criadas uma vez, quando `condicoes.json`
+  ainda não existe.
+- **Cotação por item**: cada `Item` do pacote tem `id` (pacotes antigos recebem i1, i2… pela posição); a RFQ
+  guarda `cotacao` (`CotacaoItem` por `item_id`: preço, ferramental, lead time em dias, frete e embalagem por peça,
+  na moeda da RFQ) e `validade`. Custo unitário = preço + frete + embalagem; custo das peças = custo unitário ×
+  volume anual (ou quantidade, ou 1). O comparativo converte pela `cambios` do pacote para `moeda_comparativo`.
+- **Volumes por ano** (opcional por pacote, `Pacote.volumes_por_ano`): `Item.volumes` = EAU Y1…Yn, um por ano de
+  lifetime do projeto; rótulos em `rfq.rotulos_anos` (ano do SOP em diante, ou Y1…). Substituem o volume anual no
+  e-mail; `Item.volume_medio()` (média dos anos) é o volume usado no comparativo e nas listas.
+- **Solicitante** foi removido (v0.4): dados antigos com `solicitante_id`/`copiar_solicitante` são ignorados.
 
 ## Convenções
 

@@ -46,7 +46,7 @@ REPETIR_VERIFICACAO_MS = 30_000  # enquanto houver e-mails aguardando envio, con
 SEGUNDA_TENTATIVA_MS = 8_000  # ao voltar ao app o e-mail pode ainda estar na Caixa de Saída
 
 # Abas da Base de dados que também podem ser abertas diretamente (ex.: ir_para("fornecedores")).
-ABAS_BASE = {"controle", "fornecedores", "commodities", "projetos", "solicitantes", "feriados", "modelos"}
+ABAS_BASE = {"controle", "fornecedores", "commodities", "projetos", "feriados", "condicoes", "modelos"}
 
 
 class JanelaPrincipal(QMainWindow):
@@ -89,7 +89,7 @@ class JanelaPrincipal(QMainWindow):
         lateral_layout.addWidget(enviar)
         self.botao_base = botao("Base de dados", lambda: self.ir_para("base"),
                                 dica="As antigas abas da planilha: Controle, Fornecedores, Commodities, "
-                                     "Projetos, Solicitantes, Feriados e Corpo do E-mail (Ctrl+B)")
+                                     "Projetos, Feriados, Condições e Corpo do E-mail (Ctrl+B)")
         self.botao_base.setObjectName("botaoLateral")
         self.botao_base.setCheckable(True)
         lateral_layout.addWidget(self.botao_base)

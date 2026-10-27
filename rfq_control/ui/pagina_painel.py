@@ -143,21 +143,30 @@ class PaginaPainel(QWidget):
         layout_pendencias.addWidget(self.pendencias)
 
         cartao_fornecedores, layout_fornecedores = _cartao_secao(
-            "Fornecedores", "RFQs enviadas, respostas e tempo médio (dias úteis)"
+            "Scorecard dos fornecedores",
+            "Resposta, tempo médio (dias úteis), pontualidade (respostas até o prazo), vezes com o menor custo das "
+            "peças nos comparativos (pacotes com duas ou mais propostas completas) e RFQs ganhas",
         )
         self.fornecedores = Tabela([
-            Coluna("Fornecedor", lambda f: f.nome, largura=170),
-            Coluna("RFQs", lambda f: f.total, largura=70, alinhamento=Qt.AlignmentFlag.AlignRight),
-            Coluna("Respondidas", lambda f: f.respondidas, largura=115, alinhamento=Qt.AlignmentFlag.AlignRight),
-            Coluna("Taxa de resposta", lambda f: f.taxa_resposta, largura=160),
-            Coluna("Tempo médio", lambda f: f.media_dias, alinhamento=Qt.AlignmentFlag.AlignRight, esticar=True,
+            Coluna("Fornecedor", lambda f: f.nome, largura=200),
+            Coluna("RFQs", lambda f: f.total, largura=65, alinhamento=Qt.AlignmentFlag.AlignRight),
+            Coluna("Respondidas", lambda f: f.respondidas, largura=110, alinhamento=Qt.AlignmentFlag.AlignRight),
+            Coluna("Taxa de resposta", lambda f: f.taxa_resposta, largura=170),
+            Coluna("Tempo médio", lambda f: f.media_dias, largura=110, alinhamento=Qt.AlignmentFlag.AlignRight,
                    formato=lambda v: "" if v is None else f"{v:.1f}".replace(".", ",")),
+            Coluna("No prazo", lambda f: f.pontualidade, largura=170,
+                   dica=lambda f: f"{f.no_prazo} de {f.com_prazo} resposta(s) até o prazo" if f.com_prazo else ""),
+            Coluna("Menor preço", lambda f: f.competitividade, largura=120, alinhamento=Qt.AlignmentFlag.AlignRight,
+                   formato=lambda v: "" if v is None else f"{v:.0%}",
+                   dica=lambda f: f"{f.mais_barata} de {f.concorrencias} comparativo(s)" if f.concorrencias else ""),
+            Coluna("Selecionadas", lambda f: f.selecionadas, alinhamento=Qt.AlignmentFlag.AlignRight, esticar=True),
         ], selecao_multipla=False)
         self.fornecedores.setItemDelegateForColumn(3, DelegadoMedidor(self.fornecedores))
+        self.fornecedores.setItemDelegateForColumn(5, DelegadoMedidor(self.fornecedores))
         self.fornecedores.setMinimumHeight(260)
         layout_fornecedores.addWidget(self.fornecedores)
-        grade.addWidget(cartao_pendencias, 1, 0)
-        grade.addWidget(cartao_fornecedores, 1, 1)
+        grade.addWidget(cartao_pendencias, 1, 0, 1, 2)
+        grade.addWidget(cartao_fornecedores, 2, 0, 1, 2)
         grade.setColumnStretch(0, 1)
         grade.setColumnStretch(1, 1)
         layout.addLayout(grade)

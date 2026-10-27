@@ -55,6 +55,7 @@ log = logging.getLogger(__name__)
 
 PAPEL_ORDEM = Qt.ItemDataRole.UserRole + 1
 PAPEL_OBJETO = Qt.ItemDataRole.UserRole + 2
+MOEDAS = ["BRL", "USD", "EUR", "ARS", "CNY", "JPY", "MXN", "GBP"]  # sugestões (aceita outras)
 
 
 # ---------------------------------------------------------------- mensagens

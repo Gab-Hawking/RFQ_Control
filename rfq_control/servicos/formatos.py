@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date, datetime
+from typing import Any
 
 from ..modelos import Idioma
 
@@ -87,6 +89,37 @@ def numero_br(valor: float | None, casas: int | None = None) -> str:
     return texto.replace(",", "§").replace(".", ",").replace("§", ".")
 
 
+def valor_monetario(valor: float | None) -> str:
+    """Preço no padrão brasileiro com 2 a 4 casas: 0,1234 · 1.234,50 · 2,00."""
+    if valor is None:
+        return ""
+    texto = f"{valor:,.4f}"
+    inteiro, decimais = texto.split(".")
+    decimais = decimais.rstrip("0").ljust(2, "0")
+    return inteiro.replace(",", ".") + "," + decimais
+
+
+def ler_lead_time(texto: str) -> int | None:
+    """Lead time em dias: '30', '30 dias', '6 semanas', '6 sem', '6 weeks', '2 meses' (30 dias cada)."""
+    texto = (texto or "").strip().casefold()
+    if not texto:
+        return None
+    encontrado = re.fullmatch(r"(\d+(?:[.,]\d+)?)\s*([a-zçãé]*)\.?", texto)
+    if not encontrado:
+        raise ValueError(f"lead time inválido: '{texto}' (ex.: 30, 30 dias, 6 semanas)")
+    numero = float(encontrado.group(1).replace(",", "."))
+    unidade = encontrado.group(2)
+    if unidade in ("", "d", "dia", "dias", "day", "days", "dd"):
+        fator = 1
+    elif unidade in ("s", "sem", "semana", "semanas", "w", "wk", "wks", "week", "weeks"):
+        fator = 7
+    elif unidade in ("m", "mes", "mês", "meses", "month", "months"):
+        fator = 30
+    else:
+        raise ValueError(f"lead time inválido: '{texto}' (use dias, semanas ou meses)")
+    return round(numero * fator)
+
+
 def numero_por_idioma(valor: float | None, idioma: Idioma) -> str:
     if valor is None:
         return ""
@@ -94,6 +127,14 @@ def numero_por_idioma(valor: float | None, idioma: Idioma) -> str:
         casas = 0 if float(valor).is_integer() else 2
         return f"{valor:,.{casas}f}"
     return numero_br(valor)
+
+
+def chave_cabecalho(texto: Any) -> str:
+    """'  EMAIL (To) ' → 'emailto'; 'Descrição' → 'descricao'."""
+    sem_acento = "".join(
+        c for c in unicodedata.normalize("NFD", str(texto or "").casefold()) if unicodedata.category(c) != "Mn"
+    )
+    return re.sub(r"[^a-z0-9]", "", sem_acento)
 
 
 def normalizar_nome(texto: str) -> str:

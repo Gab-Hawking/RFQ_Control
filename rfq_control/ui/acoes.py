@@ -227,3 +227,15 @@ def abrir_rfq(janela: JanelaPrincipal, rfq: RFQ | None) -> bool:
     dialogo = DialogoRFQ(janela, janela.base.rfqs.obter(rfq.id) or rfq)
     dialogo.exec()
     return dialogo.alterou
+
+
+def comparar_propostas(janela: JanelaPrincipal, pacote_id: str | None) -> bool:
+    """Abre o comparativo de propostas do pacote; True se algo mudou (câmbio, vencedora, RFQ editada)."""
+    from .dialogo_comparativo import DialogoComparativo
+
+    if not pacote_id or not janela.base.pacotes.obter(pacote_id):
+        avisar(janela, "Selecione um pacote.")
+        return False
+    dialogo = DialogoComparativo(janela, pacote_id)
+    dialogo.exec()
+    return dialogo.alterou

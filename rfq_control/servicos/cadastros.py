@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..armazenamento import BaseDados, Colecao
-from ..modelos import Commodity, Feriado, Fornecedor, Projeto, Solicitante, StatusRFQ
+from ..modelos import Commodity, Condicao, Feriado, Fornecedor, Projeto, StatusRFQ
 from .dias_uteis import feriados_nacionais_brasil
 from .formatos import normalizar_nome
 from .rfq import ErroNegocio
@@ -45,9 +45,19 @@ def salvar_projeto(base: BaseDados, projeto: Projeto) -> Projeto:
     return base.projetos.salvar(projeto)
 
 
-def salvar_solicitante(base: BaseDados, solicitante: Solicitante) -> Solicitante:
-    _nome_unico(base.solicitantes, solicitante.nome, solicitante.id, "um solicitante")
-    return base.solicitantes.salvar(solicitante)
+def salvar_condicao(base: BaseDados, condicao: Condicao) -> Condicao:
+    """Grava a condição e cria os textos (vazios) que faltarem na aba Corpo do E-mail."""
+    _nome_unico(base.condicoes, condicao.nome, condicao.id, "uma condição")
+    if any(base.commodities.obter(i) is None for i in condicao.commodity_ids):
+        raise ErroNegocio("Uma das commodities da condição não existe mais. Revise a coluna Commodity.")
+    ids = list(dict.fromkeys(condicao.commodity_ids))
+    if ids != condicao.commodity_ids:
+        condicao = condicao.model_copy(update={"commodity_ids": ids})
+    salva = base.condicoes.salvar(condicao)
+    faltando = base.textos_faltando([salva])
+    if faltando:
+        base.modelos_email.salvar_varios(faltando)
+    return salva
 
 
 def salvar_feriado(base: BaseDados, feriado: Feriado) -> Feriado:
@@ -68,16 +78,13 @@ def motivo_bloqueio_exclusao(base: BaseDados, registro) -> str | None:
         total = len(base.pacotes_do_projeto(registro.id))
         if total:
             return f"O projeto '{registro.nome}' tem {total} pacote(s) de cotação. Desmarque 'Ativo' em vez de excluir."
-    elif isinstance(registro, Solicitante):
-        total = len(base.pacotes_do_solicitante(registro.id))
-        if total:
-            return f"O solicitante '{registro.nome}' está em {total} pacote(s). Desmarque 'Ativo' em vez de excluir."
     elif isinstance(registro, Commodity):
-        fornecedores = len(base.fornecedores_da_commodity(registro.id))
+        # a commodity não depende de fornecedor (sai deles ao excluir); só pacotes e condições a prendem
         pacotes = len(base.pacotes_da_commodity(registro.id))
-        if fornecedores or pacotes:
-            return (f"A commodity '{registro.nome}' está em uso ({fornecedores} fornecedor(es), {pacotes} pacote(s)). "
-                    "Retire-a dos fornecedores e pacotes antes de excluir.")
+        condicoes = len(base.condicoes_da_commodity(registro.id))
+        if pacotes or condicoes:
+            return (f"A commodity '{registro.nome}' está em uso ({pacotes} pacote(s), {condicoes} condição(ões)). "
+                    "Retire-a dos pacotes e das condições antes de excluir.")
     return None
 
 
@@ -86,10 +93,19 @@ def colecao_de(base: BaseDados, registro) -> Colecao:
         Fornecedor: base.fornecedores,
         Commodity: base.commodities,
         Projeto: base.projetos,
-        Solicitante: base.solicitantes,
         Feriado: base.feriados,
+        Condicao: base.condicoes,
     }
     return mapa[type(registro)]
+
+
+def aviso_exclusao(base: BaseDados, registros: list) -> str:
+    """O que mais muda ao excluir (ex.: fornecedores que perdem a commodity), para a confirmação."""
+    commodities = {r.id for r in registros if isinstance(r, Commodity)}
+    fornecedores = [f for f in base.fornecedores if commodities & set(f.commodity_ids)]
+    if fornecedores:
+        return f"A commodity também sai de {len(fornecedores)} fornecedor(es)."
+    return ""
 
 
 def excluir_registros(base: BaseDados, registros: list) -> int:
@@ -99,7 +115,17 @@ def excluir_registros(base: BaseDados, registros: list) -> int:
         motivo = motivo_bloqueio_exclusao(base, registro)
         if motivo:
             raise ErroNegocio(motivo)
-    colecao_de(base, registros[0]).remover_varios([r.id for r in registros])
+    ids = {r.id for r in registros}
+    if isinstance(registros[0], Commodity):
+        fornecedores = [
+            f.model_copy(update={"commodity_ids": [i for i in f.commodity_ids if i not in ids]})
+            for f in base.fornecedores if ids & set(f.commodity_ids)
+        ]
+        if fornecedores:
+            base.fornecedores.salvar_varios(fornecedores)
+    colecao_de(base, registros[0]).remover_varios(ids)
+    if isinstance(registros[0], Condicao):
+        base.modelos_email.remover_varios([m.id for m in base.modelos_email if m.condicao_id in ids])
     return len(registros)
 
 

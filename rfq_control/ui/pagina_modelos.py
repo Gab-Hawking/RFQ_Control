@@ -1,4 +1,4 @@
-"""Edição dos modelos de e-mail (antiga aba CorpoEmail)."""
+"""Edição dos modelos de e-mail (antiga aba CorpoEmail) e dos textos das Condições."""
 
 from __future__ import annotations
 
@@ -51,7 +51,6 @@ def pre_visualizar_html(modelo: ModeloEmail, empresa: str) -> str:
         "cliente": projeto.cliente,
         "projeto_cliente": f"{projeto.nome} ({'customer' if idioma == Idioma.EN else 'cliente'} {projeto.cliente})",
         "planta": projeto.planta,
-        "solicitante": "Solicitante Exemplo",
         "pacote": "Pacote de exemplo",
         "prazo": data_por_extenso(date.today(), idioma),
     }
@@ -60,6 +59,9 @@ def pre_visualizar_html(modelo: ModeloEmail, empresa: str) -> str:
         "tabela_projeto": tabela_projeto(projeto, idioma),
     }
     corpo, _ = renderizar(modelo.corpo, variaveis, blocos)
+    if modelo.tipo == TipoModelo.CONDICAO:
+        return ("<p style='color:#52514e'><i>Texto a mais no e-mail de RFQ quando a condição vale para o "
+                "fornecedor (no fim do e-mail, ou onde estiver a variável condicoes):</i></p><hr>" + corpo)
     assunto, _ = renderizar(modelo.assunto, variaveis, {})
     if modelo.tipo == TipoModelo.COBRANCA:
         assunto = "RE: " + renderizar(ASSUNTO_RFQ, variaveis, {})[0] + " <i>(resposta ao e-mail da RFQ)</i>"
@@ -81,7 +83,8 @@ class PaginaModelos(QWidget):
             "Textos padrão dos e-mails de RFQ, cobrança e agradecimento, em português, espanhol e inglês — o "
             "idioma usado é o do fornecedor. Separe parágrafos com uma linha em branco; use **texto** para negrito "
             "(um parágrafo inteiro em negrito vira um quadro de destaque) e as variáveis da lista para os dados. "
-            "A cobrança sai como resposta ao e-mail da RFQ, com o mesmo assunto."
+            "A cobrança sai como resposta ao e-mail da RFQ, com o mesmo assunto. Os textos de condição entram no "
+            "fim do e-mail de RFQ quando a condição (aba Condições) vale para o fornecedor."
         )
         if embutida:
             layout.setContentsMargins(12, 12, 12, 8)
@@ -97,7 +100,7 @@ class PaginaModelos(QWidget):
 
         divisor = QSplitter(Qt.Orientation.Horizontal)
         self.lista = QListWidget()
-        self.lista.setMaximumWidth(330)
+        self.lista.setMaximumWidth(360)
         self.lista.currentItemChanged.connect(self._selecionar)
         divisor.addWidget(self.lista)
 
@@ -109,9 +112,11 @@ class PaginaModelos(QWidget):
         editor_layout.addWidget(self.assunto)
         editor_layout.addWidget(QLabel("Corpo"))
         self.corpo = QPlainTextEdit()
+        self.corpo.setTabStopDistance(self.corpo.fontMetrics().horizontalAdvance(" ") * 4)  # recuo de listas
         editor_layout.addWidget(self.corpo, 1)
         botoes = QHBoxLayout()
-        botoes.addWidget(botao("Restaurar texto padrão", self._restaurar))
+        self.botao_restaurar = botao("Restaurar texto padrão", self._restaurar)
+        botoes.addWidget(self.botao_restaurar)
         botoes.addStretch()
         botoes.addWidget(botao("Pré-visualizar", self._pre_visualizar))
         botoes.addWidget(botao("Salvar modelo", self._salvar, primario=True))
@@ -151,10 +156,16 @@ class PaginaModelos(QWidget):
         ordem_idiomas = list(Idioma)
         modelos = sorted(
             self.base.modelos_email,
-            key=lambda m: (ordem_tipos.index(m.tipo), ordem_idiomas.index(m.idioma)),
+            key=lambda m: (ordem_tipos.index(m.tipo), self._nome_condicao(m).casefold(), ordem_idiomas.index(m.idioma)),
         )
         for modelo in modelos:
-            item = QListWidgetItem(f"{modelo.tipo.value} — {modelo.idioma.rotulo}")
+            if modelo.tipo == TipoModelo.CONDICAO:
+                texto = f"Condição: {self._nome_condicao(modelo)} — {modelo.idioma.rotulo}"
+                if not modelo.corpo.strip():
+                    texto += " (vazio)"
+            else:
+                texto = f"{modelo.tipo.value} — {modelo.idioma.rotulo}"
+            item = QListWidgetItem(texto)
             item.setData(Qt.ItemDataRole.UserRole, modelo.id)
             self.lista.addItem(item)
         self.lista.blockSignals(False)
@@ -163,10 +174,28 @@ class PaginaModelos(QWidget):
         self.lista.setCurrentRow(linha)
         self._selecionar(self.lista.currentItem(), None)
 
+    def _nome_condicao(self, modelo: ModeloEmail) -> str:
+        condicao = self.base.condicoes.obter(modelo.condicao_id)
+        return condicao.nome if condicao else ""
+
+    def selecionar_condicao(self, condicao_id: str, idioma: Idioma = Idioma.PT) -> None:
+        """Mostra o texto da condição (usado pelo botão 'Editar textos…' da aba Condições)."""
+        self.atualizar()
+        alvo = next((m.id for m in self.base.modelos_email
+                     if m.tipo == TipoModelo.CONDICAO and m.condicao_id == condicao_id and m.idioma == idioma), None)
+        for linha in range(self.lista.count()):
+            if self.lista.item(linha).data(Qt.ItemDataRole.UserRole) == alvo:
+                self.lista.setCurrentRow(linha)
+                return
+
     def _selecionar(self, item, _anterior) -> None:
         self.atual = self.base.modelos_email.obter(item.data(Qt.ItemDataRole.UserRole)) if item else None
+        condicao = self.atual is not None and self.atual.tipo == TipoModelo.CONDICAO
         self.assunto.setText(self.atual.assunto if self.atual else "")
+        self.assunto.setEnabled(not condicao)
+        self.assunto.setPlaceholderText("Não se aplica: o texto entra no e-mail de RFQ" if condicao else "")
         self.corpo.setPlainText(self.atual.corpo if self.atual else "")
+        self.botao_restaurar.setEnabled(not condicao)
 
     def _inserir_variavel(self, item: QListWidgetItem) -> None:
         self.corpo.insertPlainText(f"{{{{{item.data(Qt.ItemDataRole.UserRole)}}}}}")
@@ -186,6 +215,8 @@ class PaginaModelos(QWidget):
         if ok:
             self.atual = salvo
             self.janela.mensagem("Modelo de e-mail salvo.")
+            if salvo.tipo == TipoModelo.CONDICAO:
+                self.atualizar()  # a lista mostra "(vazio)" nos textos de condição sem texto
 
     def _restaurar(self) -> None:
         if not self.atual:

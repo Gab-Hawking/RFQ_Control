@@ -83,17 +83,22 @@ def test_modelo_exportacao_e_reimportacao(base, tmp_path):
     modelo = abas.gerar_modelo(abas.ABA_FORNECEDORES, tmp_path / "modelo.xlsx")
     livro = load_workbook(modelo)
     planilha = livro[abas.ABA_FORNECEDORES.titulo]
-    # o modelo não traz a coluna calculada (e-mail do Commodity Buyer)
+    # o modelo traz o e-mail do Commodity Buyer (completa a commodity) e a região
     assert [c.value for c in planilha[1]] == [
-        "Fornecedor", "E-mail (Para)", "E-mails Supplier (Cc)", "Commodity", "Idioma",
+        "Fornecedor", "E-mail (Para)", "E-mails Supplier (Cc)", "Commodity", "E-mail Commodity Buyer (Cc)",
+        "Idioma", "Região",
     ]
     validacoes = [v.formula1 for v in planilha.data_validations.dataValidation]
     assert '"Português,Espanhol,Inglês"' in validacoes
     assert "Instruções" in livro.sheetnames
 
-    planilha.append(["Épsilon", "ana@epsilon.com", "", "Fixadores", "Inglês"])
+    planilha.append(["Épsilon", "ana@epsilon.com", "", "Fixadores", "Fix.Buyer@op.com", "Inglês", "brazil"])
     livro.save(modelo)
     assert abas.importar_arquivo(base, abas.ABA_FORNECEDORES, modelo).criados == 1
+    epsilon = next(f for f in base.fornecedores if f.nome == "Épsilon")
+    assert epsilon.regiao == "Brasil"
+    # a commodity nova foi criada já com o e-mail do buyer
+    assert base.commodities.obter(epsilon.commodity_ids[0]).email == "fix.buyer@op.com"
 
     exportado = abas.exportar_aba(base, abas.ABA_FORNECEDORES, tmp_path / "exportado.xlsx")
     novamente = abas.importar_arquivo(base, abas.ABA_FORNECEDORES, exportado)
@@ -152,10 +157,11 @@ def test_modelo_controle_cria_rfqs_novas_em_rascunho(base, tmp_path):
     modelo = abas.gerar_modelo_controle(tmp_path / "controle.xlsx")
     livro = load_workbook(modelo)
     aba = livro["Controle"]
+    assert "SOLICITANTE" not in [c.value for c in aba[1]]
     # mesmo pacote para dois fornecedores, sem número de RFQ
     for fornecedor in ("Forn A", "Forn B"):
-        aba.append([None, None, "Solicitante X", "Cliente Q", "Projeto Q", fornecedor, "PEÇA 1", "CDC 1", None, "PC"])
-        aba.append([None, None, "Solicitante X", "Cliente Q", "Projeto Q", fornecedor, "PEÇA 2", "CDC 2", None, 2])
+        aba.append([None, None, "Cliente Q", "Projeto Q", fornecedor, "PEÇA 1", "CDC 1", None, "PC"])
+        aba.append([None, None, "Cliente Q", "Projeto Q", fornecedor, "PEÇA 2", "CDC 2", None, 2])
     livro.save(modelo)
 
     relatorio = importar_planilha(base, modelo)

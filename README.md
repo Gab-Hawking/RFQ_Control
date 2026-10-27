@@ -7,7 +7,7 @@ macros — sem travar, com tudo registrado e com mais recursos.
 ## O que ele faz
 
 - **Base de dados com as antigas abas da planilha** (botão *Base de dados* no menu lateral): Controle,
-  Fornecedores, Commodities, Projetos, Solicitantes, Feriados e Corpo do E-mail — abas em cima, logo abaixo
+  Fornecedores, Commodities, Projetos, Feriados, Condições e Corpo do E-mail — abas em cima, logo abaixo
   da descrição. Edite direto nas células (cada linha é salva sozinha; a linha atual fica destacada e a célula
   em edição ganha moldura azul), cole várias linhas do Excel com Ctrl+V, copie com Ctrl+C.
 - **Excluir com o botão ou com a tecla Delete:** nas abas de cadastro, selecione as linhas pelo número à
@@ -17,13 +17,25 @@ macros — sem travar, com tudo registrado e com mais recursos.
   histórico do envio ficam guardados) e o app oferece marcá-las como **Cancelada**.
 - **Commodities:** cada commodity tem o seu **Commodity Buyer** (nome e e-mail). Um fornecedor pode ter
   várias commodities. Nos e-mails, o buyer da commodity do pacote (ou das commodities do fornecedor) vai em
-  cópia, junto com os **E-mails Supplier (Cc)** do fornecedor.
-- **Idioma por fornecedor:** coluna *Idioma* no cadastro de fornecedores — **Português, Espanhol ou Inglês**.
-  O e-mail de cada fornecedor sai no idioma dele (texto, datas e tabela).
+  cópia, junto com os **E-mails Supplier (Cc)** do fornecedor. A commodity **não depende de fornecedor**:
+  cadastre na aba Commodities ou digite/cole o nome na aba Fornecedores (a que não existir é criada). Excluir
+  uma commodity a retira dos fornecedores; só as usadas em pacotes ou condições ficam protegidas.
+- **Idioma e região por fornecedor:** colunas *Idioma* (**Português, Espanhol ou Inglês** — o e-mail sai no
+  idioma dele: texto, datas e tabela) e *Região* (país, ex.: Brasil). O projeto também tem *Região* (país da
+  planta/cotação, ex.: Argentina). Siglas e nomes em PT/ES/EN viram o nome em português (BR, Brazil → Brasil).
+- **Condições** (aba *Condições*): textos a mais no e-mail de RFQ conforme a commodity e as regiões. Quando
+  todos os critérios preenchidos batem, o texto entra no fim do e-mail (depois do texto padrão, ou onde estiver
+  `{{condicoes}}`), no idioma do fornecedor; nos outros casos o e-mail fica igual. Os textos em português,
+  espanhol e inglês ficam na aba **Corpo do E-mail** (*Editar textos…*). Já vêm cadastradas:
+  - **Moldes** — commodity Molde: pede Moldflow, frete para TO e embalagem para TO;
+  - **Brasil → Argentina** — fornecedor do Brasil cotando projeto na Argentina: cotação em USD com
+    certificado de origem.
 - **Cadastro em massa:** em cada aba, *Importar Excel/CSV* cria ou atualiza os registros a partir de uma
   planilha (reconhece também os cabeçalhos da planilha antiga). *Baixar modelo* gera a planilha no
-  formato certo, com a lista de idiomas. Na aba Controle, a importação aceita a planilha antiga e o modelo
-  de RFQs — linhas **sem número de RFQ viram RFQs novas**, numeradas automaticamente.
+  formato certo, com a lista de idiomas e as sugestões de região. O modelo de fornecedores traz o
+  **E-mail Commodity Buyer**, que preenche o e-mail das commodities que ainda não têm (um por commodity, na
+  mesma ordem). Na aba Controle, a importação aceita a planilha antiga e o modelo de RFQs (as colunas são
+  achadas pelo cabeçalho) — linhas **sem número de RFQ viram RFQs novas**, numeradas automaticamente.
 - **Enviar e-mails** (botão no menu lateral): escolha a RFQ, marque os fornecedores que vão receber e envie —
   cada um recebe o e-mail padrão no seu idioma, com tabela de itens (com volume anual), quadro do projeto,
   prazo em destaque e anexos. Quem ainda não tem RFQ naquele pacote ganha um número novo na hora. Dá para
@@ -36,19 +48,31 @@ macros — sem travar, com tudo registrado e com mais recursos.
   voltar para ele e a cada 30 s enquanto houver pendentes) ou com *Confirmar envio*. Se o rascunho for
   apagado sem enviar, nada é registrado como enviado: use *E-mail não enviado* (ou Alterar status →
   Rascunho) para a RFQ voltar a rascunho.
+- **Volumes por ano (EAU):** na solicitação, marque *Volumes por ano* e cada item ganha uma coluna por ano do
+  lifetime do projeto — com o ano-calendário a partir do SOP (EAU 2027, EAU 2028…) ou Y1…Yn sem SOP. No e-mail,
+  essas colunas substituem o volume anual; no comparativo vale a média dos anos.
 - **Nova solicitação em um passo:** escolha o projeto e a commodity, cole os itens do Excel, anexe
   CDC/desenhos, marque os fornecedores (filtros por commodity, idioma e só marcados) → uma RFQ por fornecedor
   (`RFQ2026001`, `RFQ2026002`…) e a tela de envio já aberta.
 - **Acompanhamento:** situação de cada RFQ (Rascunho, Aguardando envio, Enviada, **Atrasada**, Respondida,
   Declinada, Selecionada…), prazo gravado, valor cotado, lead time e histórico completo.
+- **Cotação por item** (aba *Cotação* da RFQ): moeda e validade da proposta e, para cada item do pacote,
+  **preço unitário, ferramental, lead time** (dias — ou "6 semanas"), **frete e embalagem por peça** — digitados
+  ou colados do Excel (Ctrl+V). A primeira cotação de uma RFQ enviada a passa para **Respondida**.
+- **Comparativo de propostas** (*Pacotes de cotação → Comparar propostas…*, ou na RFQ): fornecedores lado a
+  lado, convertidos para a moeda do comparativo (câmbio informado na tela e guardado no pacote). Destaca em
+  verde o menor custo unitário (preço + frete + embalagem), ferramental e lead time de cada item e, entre as
+  propostas completas, o menor **custo das peças** (custo unitário × volume anual — ou quantidade), ferramental
+  e lead time. Dali se escolhe a **vencedora** e se exporta o comparativo para Excel.
 - **Cobrança na mesma conversa:** a cobrança **responde ao e-mail da RFQ** nos Itens Enviados do Outlook
   (sem o original, sai um "RE:" com a solicitação original citada).
 - **Agradecimento / status do projeto:** escolha o projeto (ex.: declinado), todas as RFQs enviadas já vêm
   marcadas e cada fornecedor recebe um e-mail no seu idioma agradecendo e informando a situação — com opção
   de mudar o status das RFQs (ex.: Cancelada).
-- **Painel:** RFQs em aberto, atrasadas, vencendo, taxa e tempo médio de resposta, RFQs por mês e
-  desempenho por fornecedor.
-- **Importação da planilha antiga** (menos de 1 segundo) e **exportação para Excel**.
+- **Painel:** RFQs em aberto, atrasadas, vencendo, taxa e tempo médio de resposta, RFQs por mês e o
+  **scorecard dos fornecedores** — taxa de resposta, tempo médio, **pontualidade** (respostas até o prazo),
+  **menor preço** (vezes com o menor custo das peças nos comparativos) e RFQs selecionadas.
+- **Importação da planilha antiga** (menos de 1 segundo) e **exportação para Excel** (com a cotação por item).
 
 ## Estrutura
 
@@ -57,7 +81,7 @@ RFQ_Control\
 ├── RFQ_Control.exe        ← abra este
 ├── programa\              ← bibliotecas (não mexa)
 └── dados\                 ← base de dados: um arquivo por "aba"
-    ├── fornecedores.json  commodities.json  projetos.json  solicitantes.json  feriados.json
+    ├── fornecedores.json  commodities.json  projetos.json  feriados.json  condicoes.json
     ├── modelos_email.json pacotes.json   rfqs.json          configuracoes.json
     └── anexos\  emails\  backup\  logs\
 ```

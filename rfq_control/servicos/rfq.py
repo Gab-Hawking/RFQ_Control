@@ -13,8 +13,11 @@ from ..armazenamento import BaseDados
 from ..modelos import (
     RFQ,
     STATUS_COM_RESPOSTA,
+    CotacaoItem,
     Idioma,
+    Item,
     Pacote,
+    Projeto,
     StatusRFQ,
     agora,
 )
@@ -50,16 +53,38 @@ def prazo_para(base: BaseDados, pacote: Pacote, inicio: date | None = None) -> d
     return somar_dias_uteis(inicio, pacote.prazo_dias_uteis, base.datas_feriados())
 
 
+def rotulos_anos(projeto: Projeto | None) -> list[str]:
+    """Anos dos volumes (um por ano de lifetime): o ano-calendário a partir do SOP (Y1 = ano do SOP) ou Y1…Yn."""
+    if projeto is None or not projeto.lifetime_anos:
+        return []
+    if projeto.sop:
+        return [str(projeto.sop.year + i) for i in range(projeto.lifetime_anos)]
+    return [f"Y{i + 1}" for i in range(projeto.lifetime_anos)]
+
+
+def anos_do_pacote(base: BaseDados, pacote: Pacote | None) -> list[str]:
+    """Rótulos dos volumes por ano do pacote (vazio se o pacote não usa volumes por ano)."""
+    if pacote is None or not pacote.volumes_por_ano:
+        return []
+    return rotulos_anos(base.projetos.obter(pacote.projeto_id))
+
+
 def _validar_pacote(base: BaseDados, pacote: Pacote) -> Pacote:
     if not base.projetos.obter(pacote.projeto_id):
         raise ErroNegocio("Selecione um projeto válido para o pacote.")
-    if pacote.solicitante_id and not base.solicitantes.obter(pacote.solicitante_id):
-        raise ErroNegocio("O solicitante selecionado não existe mais.")
     if pacote.commodity_id and not base.commodities.obter(pacote.commodity_id):
         raise ErroNegocio("A commodity selecionada não existe mais.")
     itens = [i for i in pacote.itens if not i.vazio()]
     if not itens:
         raise ErroNegocio("Inclua pelo menos um item no pacote.")
+    if pacote.volumes_por_ano:
+        anos = len(rotulos_anos(base.projetos.obter(pacote.projeto_id)))
+        if not anos:
+            raise ErroNegocio("Para usar volumes por ano, informe o Lifetime (anos) do projeto.")
+        itens = [i.model_copy(update={"volumes": Item.model_validate({"volumes": i.volumes[:anos]}).volumes})
+                 for i in itens]
+    else:
+        itens = [i.model_copy(update={"volumes": []}) if i.volumes else i for i in itens]
     pacote = pacote.model_copy(update={"itens": itens})
     if not pacote.titulo:
         projeto = base.projetos.obter(pacote.projeto_id)
@@ -132,8 +157,8 @@ def duplicar_pacote(base: BaseDados, pacote_id: str) -> Pacote:
         titulo=f"{original.titulo} (cópia)",
         projeto_id=original.projeto_id,
         commodity_id=original.commodity_id,
-        solicitante_id=original.solicitante_id,
         prazo_dias_uteis=original.prazo_dias_uteis,
+        volumes_por_ano=original.volumes_por_ano,
         observacoes=original.observacoes,
         itens=[i.model_copy() for i in original.itens],
     )
@@ -348,8 +373,20 @@ def selecionar_vencedora(base: BaseDados, rfq_id: str) -> list[RFQ]:
 
 
 CAMPOS_EDITAVEIS = (
-    "status", "idioma", "data_envio", "prazo", "data_resposta", "valor_total", "moeda", "lead_time", "observacoes",
+    "status", "idioma", "data_envio", "prazo", "data_resposta", "valor_total", "moeda", "lead_time", "validade",
+    "cotacao", "observacoes",
 )
+
+
+def _cotacao_valida(base: BaseDados, rfq: RFQ) -> list[CotacaoItem]:
+    """Só as linhas preenchidas e de itens que existem no pacote, na ordem dos itens."""
+    pacote = base.pacotes.obter(rfq.pacote_id)
+    por_item = {c.item_id: c for c in rfq.cotacao if not c.vazia()}
+    return [por_item[i.id] for i in (pacote.itens if pacote else []) if i.id in por_item]
+
+
+def _tem_preco(cotacao: list[CotacaoItem]) -> bool:
+    return any(c.preco is not None for c in cotacao)
 
 
 def salvar_rfq(
@@ -371,6 +408,16 @@ def salvar_rfq(
         rfq.status = atual.status
         _aplicar_status(base, rfq, novo, date.today())
         rfq.registrar(f"Status alterado de {atual.status.value} para {novo.value}")
+    rfq.cotacao = _cotacao_valida(base, rfq)
+    anterior = _cotacao_valida(base, atual) if atual else []
+    if rfq.cotacao != anterior:
+        cotados = sum(1 for c in rfq.cotacao if c.preco is not None)
+        rfq.registrar(f"Cotação por item registrada: {cotados} item(ns) com preço")
+        # primeira cotação de uma RFQ enviada (sem outra mudança de status): o fornecedor respondeu
+        if (_tem_preco(rfq.cotacao) and not _tem_preco(anterior) and rfq.status == StatusRFQ.ENVIADA
+                and (atual is None or atual.status == StatusRFQ.ENVIADA)):
+            _aplicar_status(base, rfq, StatusRFQ.RESPONDIDA, date.today())
+            rfq.registrar("Status alterado de Enviada para Respondida (cotação registrada)")
     rfq.registrar(descricao)
     return base.rfqs.salvar(rfq)
 
@@ -402,15 +449,29 @@ def pacotes_sem_rfq(base: BaseDados, pacote_ids: list[str]) -> list[Pacote]:
 
 @dataclass
 class ResumoFornecedor:
+    """Scorecard do fornecedor: resposta, pontualidade, competitividade e RFQs ganhas."""
+
     nome: str
     total: int = 0
     respondidas: int = 0
     selecionadas: int = 0
     dias_resposta: list[int] = field(default_factory=list)
+    no_prazo: int = 0  # respostas até o prazo
+    com_prazo: int = 0  # respostas com prazo e data de resposta (base da pontualidade)
+    mais_barata: int = 0  # pacotes em que teve o menor custo das peças no comparativo
+    concorrencias: int = 0  # pacotes com ao menos duas propostas completas, incluindo a dele
 
     @property
     def taxa_resposta(self) -> float:
         return self.respondidas / self.total if self.total else 0.0
+
+    @property
+    def pontualidade(self) -> float | None:
+        return self.no_prazo / self.com_prazo if self.com_prazo else None
+
+    @property
+    def competitividade(self) -> float | None:
+        return self.mais_barata / self.concorrencias if self.concorrencias else None
 
     @property
     def media_dias(self) -> float | None:
@@ -478,6 +539,9 @@ def calcular_indicadores(base: BaseDados, hoje: date | None = None, meses: int =
                 dias = max(0, dias_uteis_entre(rfq.data_envio, rfq.data_resposta, feriados))
                 dias_resposta.append(dias)
                 resumo.dias_resposta.append(dias)
+            if rfq.prazo and rfq.data_resposta:
+                resumo.com_prazo += 1
+                resumo.no_prazo += rfq.data_resposta <= rfq.prazo
         elif rfq.status == StatusRFQ.ENVIADA:
             ind.em_aberto += 1
             if rfq.atrasada(hoje):
@@ -491,6 +555,12 @@ def calcular_indicadores(base: BaseDados, hoje: date | None = None, meses: int =
     ind.por_mes = [
         (f"{_MESES_CURTOS[m - 1]}/{str(a)[2:]}", contagem_mes.get((a, m), 0)) for a, m in chaves_meses
     ]
+    from .cotacao import competitividade  # importado aqui: cotacao.py usa este módulo
+
+    for fornecedor_id, (mais_barata, concorrencias) in competitividade(base).items():
+        if fornecedor_id in resumos:
+            resumos[fornecedor_id].mais_barata = mais_barata
+            resumos[fornecedor_id].concorrencias = concorrencias
     ind.fornecedores = sorted(resumos.values(), key=lambda r: (-r.total, r.nome))
     ind.pendencias.sort(key=lambda r: (r.prazo or date.max, r.numero))
     return ind

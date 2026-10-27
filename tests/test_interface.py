@@ -58,7 +58,7 @@ def test_todas_as_paginas_abrem(janela, app, mensagens):
         base.abas.setCurrentIndex(indice)
         app.processEvents()
     assert [base.abas.tabText(i) for i in range(base.abas.count())] == [
-        "Controle", "Fornecedores", "Commodities", "Projetos", "Solicitantes", "Feriados", "Corpo do E-mail",
+        "Controle", "Fornecedores", "Commodities", "Projetos", "Feriados", "Condições", "Corpo do E-mail",
     ]
     assert base.abas.tabPosition() == base.abas.TabPosition.North  # abas em cima, abaixo da descrição
     assert janela.ir_para("feriados") is base and base.abas.currentWidget() is base.feriados
@@ -238,10 +238,10 @@ def test_grade_cola_varias_linhas_do_excel(janela, app):
 def test_sair_da_base_com_linha_pendente_pergunta(janela, app, monkeypatch):
     from rfq_control.ui import janela_principal
 
-    base = janela.ir_para("solicitantes")
-    base.solicitantes.nova_linha()
-    grade = base.solicitantes.grade
-    grade.model().setData(_indice(grade, len(grade.modelo.linhas) - 1, "email"), "x@y.com")
+    base = janela.ir_para("condicoes")
+    base.condicoes.nova_linha()
+    grade = base.condicoes.grade
+    grade.model().setData(_indice(grade, len(grade.modelo.linhas) - 1, "regiao_projeto"), "Chile")
     respostas = []
     monkeypatch.setattr(janela_principal, "confirmar", lambda *a, **k: respostas.append(a) or False)
     assert janela.ir_para("painel") is base  # ficou na Base de dados
@@ -397,7 +397,7 @@ def test_grade_de_fornecedores_com_commodity(com_commodities, app):
     grade = pagina.fornecedores.grade
     titulos = [c.titulo for c in grade.definicao.colunas]
     assert titulos == ["Fornecedor", "E-mail (Para)", "E-mails Supplier (Cc)", "Commodity",
-                       "E-mail Commodity Buyer (Cc)", "Idioma"]
+                       "E-mail Commodity Buyer (Cc)", "Idioma", "Região"]
     linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "f3")
     buyer = _indice(grade, linha, "email_buyer")
     assert not grade.model().flags(buyer) & Qt.ItemFlag.ItemIsEditable  # coluna calculada
@@ -408,7 +408,8 @@ def test_grade_de_fornecedores_com_commodity(com_commodities, app):
     app.processEvents()
     editor = grade.indexWidget(indice) or next(
         w for w in grade.viewport().findChildren(EditorMultiplo) if w.isVisible())
-    assert [editor.item(i).text() for i in range(editor.count())] == ["Dispositivos", "Ferramentaria"]
+    # "Molde": commodity da condição padrão Moldes
+    assert [editor.item(i).text() for i in range(editor.count())] == ["Dispositivos", "Ferramentaria", "Molde"]
     editor._alternar(editor.item(0))
     editor._alternar(editor.item(1))
     grade.itemDelegate().setModelData(editor, grade.model(), indice)
@@ -545,14 +546,14 @@ def test_envio_nao_pre_marca_rfq_aguardando_envio(janela, pacote_exemplo, monkey
     assert [d.fornecedor_id for d in dialogo.destinatarios()] == ["f2"]
 
 
-def test_colar_pula_a_coluna_calculada(janela, app):
+def test_colar_segue_as_colunas_do_modelo(janela, app):
     pagina = janela.ir_para("fornecedores")
     grade = pagina.fornecedores.grade
     grade.setCurrentIndex(QModelIndex())
-    # linha no formato da planilha de 'Baixar modelo' (só colunas editáveis)
-    grade.colar("Proveedor Uno\tventas@uno.com\t\t\tEspanhol\n")
+    # linha no formato da planilha de 'Baixar modelo' (o e-mail do buyer é ignorado na grade)
+    grade.colar("Proveedor Uno\tventas@uno.com\t\t\tbuyer@op.com\tEspanhol\tAR\n")
     uno = next(f for f in janela.base.fornecedores if f.nome == "Proveedor Uno")
-    assert uno.idioma == Idioma.ES and uno.emails_para() == ["ventas@uno.com"]
+    assert uno.idioma == Idioma.ES and uno.emails_para() == ["ventas@uno.com"] and uno.regiao == "Argentina"
 
 
 def test_grade_com_linha_pendente_atualiza_as_outras(com_commodities, app):
@@ -637,3 +638,221 @@ def test_mensagens_abrem_na_janela_e_nao_na_aba(janela):
 
     aba = janela.ir_para("fornecedores").fornecedores
     assert janela_de(aba) is janela and janela_de(None) is None
+
+
+# ---------------------------------------------------------------- condições, região e sem solicitante
+
+
+def test_aba_condicoes_abre_os_textos_no_corpo_do_email(janela, app, mensagens):
+    from rfq_control.modelos import TipoModelo
+
+    pagina = janela.ir_para("condicoes")
+    grade = pagina.condicoes.grade
+    linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.registro.nome == "Moldes")
+    grade.setCurrentIndex(_indice(grade, linha, "nome"))
+    pagina._textos_condicao()
+    modelos = pagina.modelos
+    assert pagina.abas.currentWidget() is modelos
+    assert modelos.atual.tipo == TipoModelo.CONDICAO and modelos.atual.idioma == Idioma.PT
+    assert modelos.corpo.toPlainText().startswith("Favor enviar a cotação incluindo:")
+    assert not modelos.assunto.isEnabled() and not modelos.botao_restaurar.isEnabled()
+    assert modelos.lista.currentItem().text() == "Condição: Moldes — Português"
+    # texto vazio é aceito (nada é acrescentado nesse idioma) e a lista avisa
+    modelos.corpo.setPlainText("")
+    modelos._salvar()
+    assert not [m for m in mensagens if m[0] == "critical"]
+    assert modelos.lista.currentItem().text() == "Condição: Moldes — Português (vazio)"
+    pagina.condicoes.atualizar()
+    moldes = next(l for l in grade.modelo.linhas if l.registro.nome == "Moldes")
+    assert moldes.valores["texto"] == "sem texto em Português"
+
+
+def test_regiao_na_grade_aceita_valor_digitado(janela, app):
+    from PySide6.QtWidgets import QComboBox
+
+    pagina = janela.ir_para("fornecedores")
+    grade = pagina.fornecedores.grade
+    linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "f1")
+    indice = _indice(grade, linha, "regiao")
+    grade.setCurrentIndex(indice)
+    grade.edit(indice)
+    app.processEvents()
+    editor = grade.viewport().findChildren(QComboBox)[-1]  # editor aberto na célula
+    assert editor.isEditable() and editor.findText("Argentina") >= 0
+    editor.setCurrentText("uruguay")
+    grade.itemDelegate().setModelData(editor, grade.model(), indice)
+    assert janela.base.fornecedores.obter("f1").regiao == "Uruguai"
+
+
+def test_dialogos_tem_regiao_e_nao_tem_solicitante(janela, pacote_exemplo, mensagens):
+    from rfq_control.ui.dialogo_pacote import DialogoPacote
+    from rfq_control.ui.dialogo_rfq import DialogoRFQ
+    from rfq_control.ui.dialogos_cadastro import DialogoFornecedor
+
+    dialogo = DialogoFornecedor(janela, janela.base.fornecedores.obter("f1"))
+    dialogo.regiao.setCurrentText("BR")
+    dialogo._salvar()
+    assert janela.base.fornecedores.obter("f1").regiao == "Brasil"
+
+    janela.base.projetos.salvar(janela.base.projetos.obter("prj1").model_copy(update={"regiao": "Argentina"}))
+    nova = DialogoPacote(janela)
+    assert not hasattr(nova, "solicitante")
+    nova.projeto.setCurrentIndex(nova.projeto.findData("prj1"))
+    assert "Região: Argentina" in nova.info_projeto.text()
+
+    _, [rfq] = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1"])
+    detalhe = DialogoRFQ(janela, rfq)
+    textos = [detalhe.info.itemAt(i).widget().text() for i in range(detalhe.info.count())
+              if detalhe.info.itemAt(i).widget()]
+    assert "Solicitante" not in textos and "Condições" in textos
+    assert "Brasil → Argentina" in textos
+
+
+def test_controle_e_listas_sem_solicitante(janela, pacote_exemplo):
+    srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1"])
+    controle = janela.ir_para("controle").controle
+    rfqs = janela.ir_para("rfqs")
+    pacotes = janela.ir_para("pacotes")
+    for tabela in (controle.tabela, rfqs.tabela, pacotes.tabela):
+        titulos = [tabela.model().headerData(i, Qt.Orientation.Horizontal) for i in range(tabela.model().columnCount())]
+        assert "Solicitante" not in titulos
+    assert controle.tabela.itemDelegateForColumn(10).__class__.__name__ == "DelegadoSituacao"
+
+
+def test_excluir_commodity_avisa_que_sai_dos_fornecedores(com_commodities, app, monkeypatch):
+    from rfq_control.ui import pagina_base_dados
+
+    pagina = com_commodities.ir_para("commodities")
+    grade = pagina.commodities.grade
+    linha = next(i for i, l in enumerate(grade.modelo.linhas) if l.id == "c1")
+    grade.setCurrentIndex(_indice(grade, linha, "nome"))
+    perguntas = []
+    monkeypatch.setattr(pagina_base_dados, "confirmar", lambda _p, texto, *a, **k: perguntas.append(texto) or True)
+    pagina.commodities.excluir()
+    assert "sai de 1 fornecedor" in perguntas[0]
+    assert com_commodities.base.commodities.obter("c1") is None
+    assert com_commodities.base.fornecedores.obter("f1").commodity_ids == []
+
+
+# ---------------------------------------------------------------- Fase 3: cotação por item e comparativo
+
+
+@pytest.fixture
+def propostas(janela, pacote_exemplo):
+    """Pacote com dois itens enviado a f1 e f2 (enviadas, sem cotação ainda)."""
+    pacote, rfqs = srv.criar_pacote_com_rfqs(janela.base, pacote_exemplo, ["f1", "f2"])
+    for rfq in rfqs:
+        srv.registrar_envio(janela.base, rfq, rfq.idioma, "enviada", date(2026, 9, 1))
+    return pacote, [janela.base.rfqs.obter(r.id) for r in rfqs]
+
+
+def test_cotacao_colada_na_rfq_e_gravada(janela, propostas, mensagens):
+    from rfq_control.ui.dialogo_rfq import DialogoRFQ
+    from rfq_control.ui.tabela_cotacao import TabelaCotacao
+
+    _, (um, _dois) = propostas
+    dialogo = DialogoRFQ(janela, um)
+    tabela: TabelaCotacao = dialogo.tabela_cotacao
+    assert tabela.rowCount() == 2 and not tabela.item(0, 1).flags() & Qt.ItemFlag.ItemIsEditable
+    tabela.setCurrentCell(0, 1)  # numa coluna do item: a colagem começa no preço
+    assert tabela.colar("10,50\t1.200\t6 semanas\t0,5\t0,25\n4\t\t30\n9\t9\t9\n") == 2  # linha a mais: ignorada
+    assert "2 de 2 item(ns) com preço" in dialogo.totais.text()
+    dialogo.validade.definir(date(2026, 12, 31))
+    dialogo._salvar()
+    salva = janela.base.rfqs.obter(um.id)
+    assert [(c.preco, c.ferramental, c.lead_time_dias, c.frete, c.embalagem) for c in salva.cotacao] == [
+        (10.5, 1200, 42, 0.5, 0.25), (4, None, 30, None, None)]
+    assert salva.status == StatusRFQ.RESPONDIDA and salva.validade == date(2026, 12, 31)
+
+    dialogo = DialogoRFQ(janela, salva)
+    assert dialogo.tabela_cotacao.item(0, 6).text() == "10,50"
+    dialogo.tabela_cotacao.item(1, 6).setText("abc")
+    assert "não é um número válido" in dialogo.totais.text()
+    dialogo._salvar()
+    assert "Item 2, Preço unit." in mensagens[-1][1]  # erro claro e nada gravado
+    assert janela.base.rfqs.obter(um.id).cotacao == salva.cotacao
+
+
+def test_comparativo_pela_pagina_de_pacotes(janela, propostas, monkeypatch, mensagens):
+    from rfq_control.modelos import CotacaoItem
+    from rfq_control.ui import dialogo_comparativo
+    from rfq_control.ui.dialogo_comparativo import DialogoComparativo
+
+    pacote, (um, dois) = propostas
+    a, b = janela.base.pacotes.obter(pacote.id).itens[:2]
+    for rfq, precos, moeda in ((um, (10, 4), "BRL"), (dois, (1, 1), "USD")):
+        cotacao = [CotacaoItem(item_id=a.id, preco=precos[0]), CotacaoItem(item_id=b.id, preco=precos[1])]
+        srv.salvar_rfq(janela.base, rfq.model_copy(update={"cotacao": cotacao, "moeda": moeda}), carregada=rfq)
+
+    dialogo = DialogoComparativo(janela, pacote.id)
+    assert dialogo.resumo.rowCount() == 2 and "Informe o câmbio de USD" in dialogo.aviso.text()
+    assert list(dialogo.campos_cambio) == ["USD"]
+    dialogo.campos_cambio["USD"].setValue(5)
+    dialogo._aplicar_cambio()
+    assert janela.base.pacotes.obter(pacote.id).cambios == {"USD": 5.0} and dialogo.aviso.isHidden()
+    # 2 colunas por item fixas + 3 por proposta; o menor custo das peças fica em destaque
+    assert dialogo.itens.columnCount() == 4 + 3 * 2
+    # f1: 10 × 2 + 4 × 154.000 BRL; f2: (1 × 2 + 1 × 154.000) USD × 5 — o menor custo das peças é o de f1
+    linha_um = next(l for l in range(2) if dialogo.resumo.item(l, 0).text() == um.numero)
+    linha_dois = 1 - linha_um
+    assert dialogo.resumo.item(linha_um, 6).background().color() == dialogo_comparativo.FUNDO_MELHOR
+    assert dialogo.resumo.item(linha_dois, 6).text() == "770.010,00"
+
+    dialogo.resumo.selectRow(linha_dois)
+    monkeypatch.setattr(dialogo_comparativo, "confirmar", lambda *a, **k: True)
+    dialogo._vencedora()
+    assert janela.base.rfqs.obter(dois.id).status == StatusRFQ.SELECIONADA
+    assert janela.base.rfqs.obter(um.id).status == StatusRFQ.NAO_SELECIONADA
+
+    pagina = janela.ir_para("pacotes")
+    titulos = [pagina.rfqs.model().headerData(i, Qt.Orientation.Horizontal) for i in range(pagina.rfqs.model().columnCount())]
+    assert "Itens cotados" in titulos and "Validade" in titulos
+
+
+def test_editar_pacote_mantem_o_id_dos_itens(janela, propostas):
+    from rfq_control.ui.dialogo_pacote import DialogoPacote
+
+    pacote, _ = propostas
+    ids = [i.id for i in janela.base.pacotes.obter(pacote.id).itens]
+    dialogo = DialogoPacote(janela, janela.base.pacotes.obter(pacote.id))
+    dialogo.tabela_itens.item(0, 2).setText("descrição nova")
+    dialogo.tabela_itens.adicionar_linha()
+    dialogo.tabela_itens.item(2, 0).setText("PECA C")
+    dialogo._salvar()
+    itens = janela.base.pacotes.obter(pacote.id).itens
+    assert [i.id for i in itens[:2]] == ids and itens[0].descricao == "descrição nova"
+    assert itens[2].id and itens[2].id not in ids
+
+
+def test_painel_mostra_o_scorecard(janela, app):
+    pagina = janela.ir_para("painel")
+    modelo = pagina.fornecedores.model()
+    titulos = [modelo.headerData(i, Qt.Orientation.Horizontal) for i in range(modelo.columnCount())]
+    assert titulos[-3:] == ["No prazo", "Menor preço", "Selecionadas"]
+
+
+def test_volumes_por_ano_na_nova_solicitacao(janela, app):
+    from rfq_control.ui.dialogo_pacote import DialogoPacote
+
+    base = janela.base
+    base.projetos.salvar(base.projetos.obter("prj2").model_copy(update={"sop": date(2027, 1, 1), "lifetime_anos": 2}))
+    dialogo = DialogoPacote(janela)
+    tabela = dialogo.tabela_itens
+    dialogo.projeto.setCurrentIndex(dialogo.projeto.findData("prj1"))  # sem lifetime
+    assert not dialogo.volumes_por_ano.isEnabled()
+    dialogo.projeto.setCurrentIndex(dialogo.projeto.findData("prj2"))
+    assert dialogo.volumes_por_ano.isEnabled()
+    tabela.item(0, 0).setText("PECA A")
+    tabela.item(0, 5).setText("500")  # volume anual
+    dialogo.volumes_por_ano.setChecked(True)
+    titulos = [tabela.horizontalHeaderItem(i).text() for i in range(tabela.columnCount())]
+    assert titulos[-2:] == ["EAU 2027", "EAU 2028"] and "Volume anual" not in titulos
+    tabela.item(0, 5).setText("1.000")
+    tabela.item(0, 6).setText("2.000")
+    dialogo.volumes_por_ano.setChecked(False)  # o volume anual volta; os anos ficam guardados na linha
+    assert tabela.item(0, 5).text() == "500"
+    dialogo.volumes_por_ano.setChecked(True)
+    assert tabela.item(0, 6).text() == "2.000"
+    [item] = tabela.itens()
+    assert item.volumes == [1000, 2000]
+    dialogo.reject()
